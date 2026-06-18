@@ -1,0 +1,40 @@
+---
+- name: "Ensure NetworkManager is running"
+  ansible.builtin.service:
+    name: NetworkManager
+    state: started
+    enabled: true
+
+- name: "Configure native VLAN (untagged) on the physical private NIC"
+  community.general.nmcli:
+    conn_name: "nested-{{ jumpbox.private_nic }}"
+    ifname: "{{ jumpbox.private_nic }}"
+    type: ethernet
+    ip4: "{{ item.gateway }}/{{ item.prefix }}"
+    mtu: "{{ mtu.private }}"
+    autoconnect: true
+    state: present
+  loop: "{{ vlans_computed | selectattr('is_native') | list }}"
+  loop_control:
+    label: "{{ item.iface }}"
+
+- name: "Configure tagged VLAN sub-interfaces"
+  community.general.nmcli:
+    conn_name: "nested-{{ item.iface }}"
+    type: vlan
+    vlandev: "{{ jumpbox.private_nic }}"
+    vlanid: "{{ item.id }}"
+    ip4: "{{ item.gateway }}/{{ item.prefix }}"
+    mtu: "{{ mtu.private }}"
+    autoconnect: true
+    state: present
+  loop: "{{ vlans_computed | rejectattr('is_native') | list }}"
+  loop_control:
+    label: "{{ item.iface }}"
+
+- name: "Bring up nested connections"
+  ansible.builtin.command: "nmcli connection up nested-{{ item.iface }}"
+  changed_when: false
+  loop: "{{ vlans_computed }}"
+  loop_control:
+    label: "{{ item.iface }}"

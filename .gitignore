@@ -1,0 +1,22 @@
+# Runtime artifacts
+logs/
+state/
+
+# Generated / secret material -- never commit
+secrets.env
+secrets.yml
+*.vault
+vault-password*
+ca/
+*.key
+*.pem
+*.crt
+
+# User-specific input (commit only the example)
+input.yaml
+input.yml
+
+# Editor/OS noise
+.DS_Store
+*.swp
+*~

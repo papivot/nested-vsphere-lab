@@ -1,0 +1,6 @@
+---
+harbor_dir: /opt/harbor
+harbor_cfg_version: "2.11.0"
+harbor_installer_url: "https://github.com/goharbor/harbor/releases/download/{{ registry.version }}/harbor-online-installer-{{ registry.version }}.tgz"
+harbor_tgz: "/opt/harbor-online-installer-{{ registry.version }}.tgz"
+harbor_api: "https://{{ registry.fqdn }}/api/v2.0"

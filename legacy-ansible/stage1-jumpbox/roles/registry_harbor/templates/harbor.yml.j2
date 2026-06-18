@@ -1,0 +1,49 @@
+# Managed by nested-vsphere-lab (registry_harbor).
+hostname: {{ registry.fqdn }}
+
+http:
+  port: 80
+
+https:
+  port: 443
+  certificate: {{ certs.dir }}/harbor.crt
+  private_key: {{ certs.dir }}/harbor.key
+
+harbor_admin_password: {{ vault_registry_admin_password }}
+
+database:
+  password: {{ vault_registry_admin_password }}
+  max_idle_conns: 100
+  max_open_conns: 900
+
+data_volume: {{ registry.data_dir }}
+
+trivy:
+  ignore_unfixed: false
+  skip_update: false
+  offline_scan: false
+  insecure: false
+
+jobservice:
+  max_job_workers: 10
+
+notification:
+  webhook_job_max_retry: 3
+
+log:
+  level: info
+  local:
+    rotate_count: 50
+    rotate_size: 200M
+    location: /var/log/harbor
+
+_version: {{ harbor_cfg_version }}
+
+proxy:
+  http_proxy: {{ proxy.http | default('') }}
+  https_proxy: {{ proxy.https | default('') }}
+  no_proxy: {{ proxy.no_proxy | default('127.0.0.1,localhost') }}
+  components:
+    - core
+    - jobservice
+    - trivy

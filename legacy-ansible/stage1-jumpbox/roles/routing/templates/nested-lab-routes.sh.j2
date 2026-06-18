@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Managed by nested-vsphere-lab (routing). Persistent static routes.
+set -e
+{% for r in routing.static_routes | default([]) %}
+ip route replace {{ r.dest }} via {{ r.via }}
+{% endfor %}
+exit 0

@@ -1,0 +1,5 @@
+---
+- name: "Install Docker + compose (Photon)"
+  ansible.builtin.command: "tdnf install -y docker docker-compose"
+  register: docker_tdnf
+  changed_when: "'Nothing to do' not in docker_tdnf.stdout"

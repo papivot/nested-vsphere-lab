@@ -1,0 +1,14 @@
+# Managed by nested-vsphere-lab (networking).
+[Match]
+Name={{ jumpbox.private_nic }}
+
+[Link]
+MTUBytes={{ mtu.private }}
+
+[Network]
+{% for v in vlans_computed if v.is_native %}
+Address={{ v.gateway }}/{{ v.prefix }}
+{% endfor %}
+{% for v in vlans_computed if not v.is_native %}
+VLAN={{ v.iface }}
+{% endfor %}

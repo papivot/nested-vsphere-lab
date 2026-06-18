@@ -1,0 +1,13 @@
+# Managed by nested-vsphere-lab (routing).
+[Unit]
+Description=Nested vSphere Lab static routes
+After=network-online.target nested-lab-nft.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart={{ lab.state_dir }}/routes.sh
+
+[Install]
+WantedBy=multi-user.target

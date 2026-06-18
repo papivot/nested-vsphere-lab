@@ -1,0 +1,9 @@
+# Managed by nested-vsphere-lab (networking).
+[Match]
+Name={{ item.iface }}
+
+[Link]
+MTUBytes={{ mtu.private }}
+
+[Network]
+Address={{ item.gateway }}/{{ item.prefix }}

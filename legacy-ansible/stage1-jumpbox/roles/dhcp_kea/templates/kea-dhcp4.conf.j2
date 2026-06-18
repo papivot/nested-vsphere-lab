@@ -1,0 +1,46 @@
+{
+  "Dhcp4": {
+    "interfaces-config": {
+      "interfaces": [ {% for v in vlans_computed %}"{{ v.iface }}"{{ "," if not loop.last }}{% endfor %} ],
+      "dhcp-socket-type": "raw"
+    },
+    "lease-database": {
+      "type": "memfile",
+      "persist": true,
+      "name": "/var/lib/kea/kea-leases4.csv"
+    },
+    "valid-lifetime": {{ dhcp.lease_time | default(86400) }},
+    "loggers": [
+      {
+        "name": "kea-dhcp4",
+        "output_options": [ { "output": "/var/log/kea-dhcp4.log" } ],
+        "severity": "INFO"
+      }
+    ],
+    "subnet4": [
+{% for v in vlans_computed %}
+      {
+        "id": {{ v.id }},
+        "subnet": "{{ v.cidr }}",
+        "interface": "{{ v.iface }}",
+        "pools": [ { "pool": "{{ v.dhcp_start }} - {{ v.dhcp_end }}" } ],
+        "option-data": [
+          { "name": "routers", "data": "{{ v.gateway }}" },
+          { "name": "domain-name-servers", "data": "{{ v.gateway }}" },
+          { "name": "domain-name", "data": "{{ jumpbox.domain }}" },
+          { "name": "domain-search", "data": "{{ jumpbox.domain }}" },
+          { "name": "interface-mtu", "data": "{{ mtu.private }}" }{% if ntp_ips | length > 0 %},
+          { "name": "ntp-servers", "data": "{{ ntp_ips | join(', ') }}" }{% endif %}
+
+        ],
+        "reservations": [
+{% set resv = dhcp.reservations | default([]) | selectattr('vlan', 'equalto', v.id) | list %}
+{% for r in resv %}
+          { "hw-address": "{{ r.mac }}", "ip-address": "{{ r.ip }}" }{{ "," if not loop.last }}
+{% endfor %}
+        ]
+      }{{ "," if not loop.last }}
+{% endfor %}
+    ]
+  }
+}

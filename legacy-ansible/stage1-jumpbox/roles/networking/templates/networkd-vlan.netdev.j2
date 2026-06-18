@@ -1,0 +1,8 @@
+# Managed by nested-vsphere-lab (networking).
+[NetDev]
+Name={{ item.iface }}
+Kind=vlan
+MTUBytes={{ mtu.private }}
+
+[VLAN]
+Id={{ item.id }}

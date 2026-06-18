@@ -1,0 +1,116 @@
+---
+# ============================================================================
+# routing :: make the jumpbox a router.
+#   - nftables: MASQUERADE out the public NIC, forward private->anywhere,
+#     block unsolicited public->private. Loaded by a dedicated systemd unit
+#     (uniform across distros, avoids per-distro nftables.service quirks).
+#   - optional persistent static routes (e.g. to Supervisor LB VIP ranges).
+#   - optional FRR/BGP, activated only when routing.bgp.enabled.
+# ============================================================================
+
+- name: "Scoped rollback hook"
+  ansible.builtin.import_tasks: rollback.yml
+  tags: [never, rollback-routing]
+
+- name: "Ensure config dir"
+  ansible.builtin.file:
+    path: "{{ lab.state_dir }}"
+    state: directory
+    mode: "0750"
+
+# ---- nftables ruleset ----
+- name: "Render nftables ruleset"
+  ansible.builtin.template:
+    src: nftables.conf.j2
+    dest: "{{ lab.state_dir }}/nftables.conf"
+    mode: "0640"
+    validate: "nft -c -f %s"
+  notify: Reload nft
+
+- name: "Install nft loader systemd unit"
+  ansible.builtin.template:
+    src: nested-lab-nft.service.j2
+    dest: /etc/systemd/system/nested-lab-nft.service
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Reload nft
+
+- name: "Enable + start nft loader"
+  ansible.builtin.systemd:
+    name: nested-lab-nft.service
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: routing.nat | bool
+
+# ---- persistent static routes ----
+- name: "Install static-routes script"
+  ansible.builtin.template:
+    src: nested-lab-routes.sh.j2
+    dest: "{{ lab.state_dir }}/routes.sh"
+    mode: "0750"
+  notify: Apply routes
+
+- name: "Install static-routes systemd unit"
+  ansible.builtin.template:
+    src: nested-lab-routes.service.j2
+    dest: /etc/systemd/system/nested-lab-routes.service
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Apply routes
+
+- name: "Enable static-routes unit"
+  ansible.builtin.systemd:
+    name: nested-lab-routes.service
+    enabled: true
+    daemon_reload: true
+  when: (routing.static_routes | default([]) | length) > 0
+
+# ---- optional FRR / BGP ----
+- name: "Configure FRR / BGP"
+  when: routing.bgp.enabled | bool
+  block:
+    - name: "Install FRR (Debian)"
+      ansible.builtin.apt:
+        name: frr
+        state: present
+      when: ansible_facts.os_family == 'Debian'
+
+    - name: "Install FRR (RedHat)"
+      ansible.builtin.dnf:
+        name: frr
+        state: present
+      when: ansible_facts.os_family == 'RedHat'
+
+    - name: "Install FRR (Photon)"
+      ansible.builtin.command: tdnf install -y frr
+      register: frr_tdnf
+      changed_when: "'Nothing to do' not in frr_tdnf.stdout"
+      when: os_key == 'Photon'
+
+    - name: "Enable bgpd daemon"
+      ansible.builtin.lineinfile:
+        path: /etc/frr/daemons
+        regexp: "^bgpd="
+        line: "bgpd=yes"
+      notify: Restart frr
+
+    - name: "Render frr.conf"
+      ansible.builtin.template:
+        src: frr.conf.j2
+        dest: /etc/frr/frr.conf
+        owner: frr
+        group: frr
+        mode: "0640"
+      notify: Restart frr
+
+    - name: "Enable + start FRR"
+      ansible.builtin.service:
+        name: frr
+        enabled: true
+        state: started
+
+- name: "Flush handlers"
+  ansible.builtin.meta: flush_handlers

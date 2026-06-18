@@ -1,0 +1,7 @@
+---
+- name: "Render netplan for the private fabric"
+  ansible.builtin.template:
+    src: netplan-nested-lab.yaml.j2
+    dest: /etc/netplan/99-nested-lab.yaml
+    mode: "0600"
+  notify: Apply netplan

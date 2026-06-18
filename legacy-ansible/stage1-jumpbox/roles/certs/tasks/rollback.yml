@@ -1,0 +1,20 @@
+---
+# Scoped rollback for certs: remove trust anchor + generated CA material.
+# Backup copy under certs.backup_path is intentionally preserved.
+- name: "Rollback :: remove CA from OS trust store"
+  ansible.builtin.file:
+    path: "{{ ca_trust_dir }}/nested-lab-ca.crt"
+    state: absent
+  notify: Update CA trust
+
+- name: "Rollback :: load per-OS trust vars (for handler)"
+  ansible.builtin.include_vars: "{{ role_path | dirname }}/base_os/vars/{{ os_key }}.yml"
+
+- name: "Rollback :: remove generated CA directory"
+  ansible.builtin.file:
+    path: "{{ certs.dir }}"
+    state: absent
+
+- name: "Rollback :: refresh trust store"
+  ansible.builtin.command: "{{ ca_trust_update_cmd }}"
+  changed_when: false

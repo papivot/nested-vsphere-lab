@@ -1,0 +1,41 @@
+---
+# Scoped rollback: remove ONLY the VLAN/private config this role created.
+# Public NIC config is never present here, so it is unaffected.
+- name: "Rollback (Debian) :: remove netplan file"
+  ansible.builtin.file:
+    path: /etc/netplan/99-nested-lab.yaml
+    state: absent
+  when: ansible_facts.os_family == 'Debian'
+  notify: Apply netplan
+
+- name: "Rollback (RedHat) :: delete nmcli connections"
+  community.general.nmcli:
+    conn_name: "nested-{{ item.iface }}"
+    state: absent
+  loop: "{{ vlans_computed }}"
+  loop_control:
+    label: "{{ item.iface }}"
+  when: ansible_facts.os_family == 'RedHat'
+
+- name: "Rollback (Photon) :: remove networkd units"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "/etc/systemd/network/10-nested-{{ jumpbox.private_nic }}.network"
+  when: os_key == 'Photon'
+  notify: Restart networkd
+
+- name: "Rollback (Photon) :: remove per-VLAN networkd units"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: >-
+    {{ vlans_computed | rejectattr('is_native') | list
+       | map(attribute='iface')
+       | map('regex_replace', '^(.*)$', '/etc/systemd/network/20-nested-\1.netdev') | list
+     + vlans_computed | rejectattr('is_native') | list
+       | map(attribute='iface')
+       | map('regex_replace', '^(.*)$', '/etc/systemd/network/21-nested-\1.network') | list }}
+  when: os_key == 'Photon'
+  notify: Restart networkd

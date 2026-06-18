@@ -1,0 +1,20 @@
+// Managed by nested-vsphere-lab (dns_bind).
+options {
+    directory "/var/cache/bind";
+
+    forwarders {
+{% for f in dns.forwarders %}
+        {{ f }};
+{% endfor %}
+    };
+    forward only;
+
+    dnssec-validation no;
+    version none;
+    listen-on-v6 { none; };
+    listen-on { 127.0.0.1; {% for v in vlans_computed %}{{ v.gateway }}; {% endfor %}};
+    allow-query { localhost; {% for v in vlans_computed %}{{ v.cidr }}; {% endfor %}};
+    allow-query-cache { any; };
+    recursion yes;
+    allow-recursion { 127.0.0.1; {% for v in vlans_computed %}{{ v.cidr }}; {% endfor %}};
+};

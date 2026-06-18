@@ -1,0 +1,9 @@
+---
+bind_packages: [bind9, bind9-utils, dnsutils]
+bind_service: named
+bind_user: bind
+bind_group: bind
+bind_layout: include            # options + local + zones dir
+named_options: /etc/bind/named.conf.options
+named_local: /etc/bind/named.conf.local
+zones_dir: /etc/bind/zones

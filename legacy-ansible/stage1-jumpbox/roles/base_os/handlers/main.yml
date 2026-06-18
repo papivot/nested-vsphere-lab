@@ -1,0 +1,9 @@
+---
+- name: Apply sysctl
+  ansible.builtin.command: sysctl --system
+  changed_when: false
+
+- name: Restart ntp
+  ansible.builtin.service:
+    name: "{{ ntp_service }}"
+    state: restarted

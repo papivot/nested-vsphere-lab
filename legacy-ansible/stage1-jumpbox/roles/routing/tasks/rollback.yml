@@ -1,0 +1,42 @@
+---
+# Scoped rollback: tear down routing/NAT only.
+- name: "Rollback :: stop + disable nft loader"
+  ansible.builtin.systemd:
+    name: nested-lab-nft.service
+    state: stopped
+    enabled: false
+  failed_when: false
+
+- name: "Rollback :: stop + disable static routes"
+  ansible.builtin.systemd:
+    name: nested-lab-routes.service
+    state: stopped
+    enabled: false
+  failed_when: false
+
+- name: "Rollback :: flush nftables ruleset"
+  ansible.builtin.command: nft flush ruleset
+  changed_when: false
+  failed_when: false
+
+- name: "Rollback :: remove units + config"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/nested-lab-nft.service
+    - /etc/systemd/system/nested-lab-routes.service
+    - "{{ lab.state_dir }}/nftables.conf"
+    - "{{ lab.state_dir }}/routes.sh"
+
+- name: "Rollback :: stop FRR if running"
+  ansible.builtin.service:
+    name: frr
+    state: stopped
+    enabled: false
+  failed_when: false
+  when: routing.bgp.enabled | bool
+
+- name: "Rollback :: daemon-reload"
+  ansible.builtin.systemd:
+    daemon_reload: true

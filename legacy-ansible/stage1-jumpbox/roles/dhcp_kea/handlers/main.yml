@@ -1,0 +1,5 @@
+---
+- name: Restart kea
+  ansible.builtin.service:
+    name: "{{ kea_service }}"
+    state: restarted

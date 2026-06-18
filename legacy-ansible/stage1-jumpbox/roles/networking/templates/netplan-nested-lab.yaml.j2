@@ -1,0 +1,24 @@
+# Managed by nested-vsphere-lab (networking). Private fabric only.
+# The public NIC ({{ jumpbox.public_nic }}) is intentionally NOT managed here.
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    {{ jumpbox.private_nic }}:
+      dhcp4: false
+      dhcp6: false
+      accept-ra: false
+      mtu: {{ mtu.private }}
+      addresses:
+{% for v in vlans_computed if v.is_native %}
+        - {{ v.gateway }}/{{ v.prefix }}
+{% endfor %}
+  vlans:
+{% for v in vlans_computed if not v.is_native %}
+    {{ v.iface }}:
+      id: {{ v.id }}
+      link: {{ jumpbox.private_nic }}
+      mtu: {{ mtu.private }}
+      addresses:
+        - {{ v.gateway }}/{{ v.prefix }}
+{% endfor %}

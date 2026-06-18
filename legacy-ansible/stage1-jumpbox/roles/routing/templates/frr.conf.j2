@@ -1,0 +1,23 @@
+! Managed by nested-vsphere-lab (routing).
+frr defaults traditional
+hostname {{ jumpbox.hostname }}
+log syslog informational
+!
+router bgp {{ routing.bgp.local_asn }}
+ bgp router-id {{ routing.bgp.router_id }}
+ no bgp ebgp-requires-policy
+{% for n in routing.bgp.neighbors | default([]) %}
+ neighbor {{ n.ip }} remote-as {{ n.asn }}
+{% endfor %}
+ !
+ address-family ipv4 unicast
+{% for v in vlans_computed %}
+  network {{ v.cidr }}
+{% endfor %}
+{% for n in routing.bgp.neighbors | default([]) %}
+  neighbor {{ n.ip }} activate
+{% endfor %}
+ exit-address-family
+!
+line vty
+!

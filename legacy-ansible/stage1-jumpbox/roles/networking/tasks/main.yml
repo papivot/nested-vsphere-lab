@@ -1,0 +1,36 @@
+---
+# ============================================================================
+# networking :: VLAN sub-interfaces on the PRIVATE NIC, gateway .1 per /24,
+#               jumbo MTU on private fabric. Public NIC is never touched.
+# Native VLAN is untagged (address sits on the physical private NIC).
+# ============================================================================
+
+- name: "Scoped rollback hook"
+  ansible.builtin.import_tasks: rollback.yml
+  tags: [never, rollback-networking]
+
+- name: "Apply per-OS network configuration"
+  ansible.builtin.include_tasks: "{{ os_key }}.yml"
+
+- name: "Flush handlers (apply network config now)"
+  ansible.builtin.meta: flush_handlers
+
+- name: "Give interfaces a moment to settle after apply"
+  ansible.builtin.pause:
+    seconds: 5
+
+- name: "Verify gateway IPs are present on the host"
+  ansible.builtin.command: "ip -4 addr show dev {{ item.iface }}"
+  changed_when: false
+  register: ip_show
+  loop: "{{ vlans_computed }}"
+  loop_control:
+    label: "{{ item.iface }} -> {{ item.gateway }}"
+
+- name: "Assert gateway IPs configured"
+  ansible.builtin.assert:
+    that: "item.item.gateway in item.stdout"
+    fail_msg: "Gateway {{ item.item.gateway }} not found on {{ item.item.iface }}."
+  loop: "{{ ip_show.results }}"
+  loop_control:
+    label: "{{ item.item.iface }}"

@@ -1,0 +1,66 @@
+---
+# ============================================================================
+# dhcp_kea :: ISC Kea DHCPv4. One subnet per VLAN, pool = last /26 of each /24.
+#   Advertises: routers/.1 gateway, DNS (.1), domain-name + domain-search,
+#   interface-mtu = jumbo (option 26), NTP servers (option 42), reservations.
+# ============================================================================
+
+- name: "Scoped rollback hook"
+  ansible.builtin.import_tasks: rollback.yml
+  tags: [never, rollback-dhcp_kea]
+
+- name: "Load per-OS Kea vars"
+  ansible.builtin.include_vars: "{{ role_path }}/vars/{{ os_key }}.yml"
+
+- name: "Compute NTP servers that are literal IPs (option 42 requires IPs)"
+  ansible.builtin.set_fact:
+    ntp_ips: "{{ ntp.upstream | map('ansible.utils.ipaddr') | reject('equalto', false) | list }}"
+
+- name: "Install Kea (Debian)"
+  ansible.builtin.apt:
+    name: "{{ kea_packages }}"
+    state: present
+  when: ansible_facts.os_family == 'Debian'
+
+- name: "Install Kea (RedHat)"
+  ansible.builtin.dnf:
+    name: "{{ kea_packages }}"
+    state: present
+  when: ansible_facts.os_family == 'RedHat'
+
+- name: "Install Kea (Photon)"
+  ansible.builtin.command: "tdnf install -y {{ kea_packages | join(' ') }}"
+  register: kea_tdnf
+  changed_when: "'Nothing to do' not in kea_tdnf.stdout"
+  when: os_key == 'Photon'
+
+- name: "Ensure Kea + lease dirs"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - /etc/kea
+    - /var/lib/kea
+
+- name: "Render Kea DHCPv4 config"
+  ansible.builtin.template:
+    src: kea-dhcp4.conf.j2
+    dest: "{{ kea_conf }}"
+    mode: "0644"
+  notify: Restart kea
+
+- name: "Validate Kea config"
+  ansible.builtin.command: "{{ kea_bin }} -t {{ kea_conf }}"
+  changed_when: false
+  register: kea_test
+  failed_when: kea_test.rc != 0
+
+- name: "Enable + start Kea"
+  ansible.builtin.service:
+    name: "{{ kea_service }}"
+    enabled: true
+    state: started
+
+- name: "Flush handlers"
+  ansible.builtin.meta: flush_handlers

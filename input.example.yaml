@@ -1,0 +1,85 @@
+---
+# ============================================================================
+# Nested vSphere Lab - single input file for all stages.
+# Copy to input.yaml and edit. Secrets (passwords/passphrases) live in
+# secrets.env (gitignored) -- see secrets.example.env. Never put secrets here.
+# ============================================================================
+
+jumpbox:
+  private_nic: ens224          # MUST be a real physical NIC (validated by preflight)
+  public_nic: ens192           # the only egress interface
+  hostname: jump01
+  domain: env1.lab.test
+
+network:
+  private_supernet: 192.168.100.0/22   # all VLAN /24s must fall inside this /22
+  native_vlan: 100                     # untagged VLAN
+  vlans:
+    - { id: 100, name: mgmt,      cidr: 192.168.100.0/24, dhcp: true }
+    - { id: 101, name: workload0, cidr: 192.168.101.0/24, dhcp: true }
+    - { id: 102, name: workload1, cidr: 192.168.102.0/24, dhcp: true }
+    # .1 of each /24 becomes the gateway IP owned by the jumpbox.
+
+mtu:
+  private: 9000                # jumbo on private NIC + all VLAN sub-interfaces
+
+ntp:
+  upstream:
+    - 10.0.0.10                # reachable from nested nodes via the jumpbox NAT
+
+dns:
+  forwarders:
+    - 8.8.8.8
+    - 1.1.1.1
+  records:                     # pre-created A + PTR so Stage 2 names resolve
+    - { name: vcsa,   ip: 192.168.100.50 }
+    - { name: esxi01, ip: 192.168.100.51 }
+    - { name: esxi02, ip: 192.168.100.52 }
+    - { name: esxi03, ip: 192.168.100.53 }
+    - { name: harbor, ip: 192.168.100.10 }
+
+dhcp:
+  lease_time: 86400            # pool auto = last /26 of each VLAN /24 (.193-.254)
+  reservations:
+    - { vlan: 100, mac: "00:50:56:aa:bb:cc", ip: 192.168.100.51 }
+
+proxy:                         # optional; leave blank if no upstream proxy
+  http: ""
+  https: ""
+  no_proxy: "localhost,127.0.0.1,.env1.lab.test,192.168.100.0/22"
+
+routing:
+  nat: true
+  static_routes:
+    - { dest: 192.168.103.0/24, via: 192.168.101.2 }   # e.g. Supervisor LB VIP range
+  bgp:
+    enabled: false
+    local_asn: 65010
+    router_id: 192.168.100.1
+    neighbors:
+      - { ip: 10.0.0.1, asn: 65000 }
+
+certs:
+  ca_mode: selfsigned          # selfsigned | byo
+  byo:
+    cert: ""                   # path to PEM cert when ca_mode=byo
+    key: ""                    # path to PEM key  when ca_mode=byo
+  intermediate: false
+  subject:
+    org: CustomerLab
+    cn: "Nested Lab Root CA"
+    country: US
+  dir: /etc/nested-lab/ca
+  backup_path: /root/lab-ca-backup
+
+registry:                      # plain OCI registry (CNCF Distribution / registry:2)
+  fqdn: harbor.env1.lab.test
+  ip: 192.168.100.10           # blank -> native VLAN gateway
+  data_dir: /data/harbor
+  auth: false                  # true -> htpasswd auth (admin / REGISTRY_ADMIN_PASSWORD)
+  pull_through:                # optional pull-through cache mirror (single upstream)
+    url: ""                    # e.g. https://registry-1.docker.io
+    port: 5443
+
+artifacts:
+  dir: /data/isos              # local OVA/ISO folder (consumed by Stage 2)

@@ -1,0 +1,19 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Reload nft
+  ansible.builtin.command: "nft -f {{ lab.state_dir }}/nftables.conf"
+  changed_when: false
+  when: routing.nat | bool
+
+- name: Apply routes
+  ansible.builtin.command: "{{ lab.state_dir }}/routes.sh"
+  changed_when: false
+  when: (routing.static_routes | default([]) | length) > 0
+
+- name: Restart frr
+  ansible.builtin.service:
+    name: frr
+    state: restarted

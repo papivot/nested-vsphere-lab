@@ -1,0 +1,11 @@
+; Managed by nested-vsphere-lab (dns_bind). Reverse zone for {{ v.cidr }}.
+{% set o = v.cidr.split('/')[0].split('.') %}
+$TTL 3600
+@   IN  SOA {{ jumpbox.hostname }}.{{ jumpbox.domain }}. admin.{{ jumpbox.domain }}. (
+            {{ zone_serial }} 3600 600 604800 3600 )
+@           IN  NS  {{ jumpbox.hostname }}.{{ jumpbox.domain }}.
+; gateway .1
+{{ v.gateway.split('.')[3] }}  IN  PTR  gw-{{ v.name }}.{{ jumpbox.domain }}.
+{% for r in dns.records | default([]) if (r.ip | ansible.utils.ipaddr(v.cidr)) %}
+{{ r.ip.split('.')[3] }}  IN  PTR  {{ r.name }}.{{ jumpbox.domain }}.
+{% endfor %}

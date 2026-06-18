@@ -1,0 +1,20 @@
+---
+# ============================================================================
+# labinfo :: render a customer-facing summary sheet and print an end-of-run
+#            summary. Read-only with respect to services.
+# ============================================================================
+
+- name: "Render lab-info sheet"
+  ansible.builtin.template:
+    src: lab-info.txt.j2
+    dest: "{{ lab.info_file }}"
+    mode: "0640"
+
+- name: "Read lab-info sheet"
+  ansible.builtin.slurp:
+    src: "{{ lab.info_file }}"
+  register: lab_info_raw
+
+- name: "Stage 1 summary"
+  ansible.builtin.debug:
+    msg: "{{ (lab_info_raw.content | b64decode).split('\n') }}"
