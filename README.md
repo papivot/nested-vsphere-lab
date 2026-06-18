@@ -13,7 +13,7 @@ Every stage shares the same input file, runner, logging, state/resume and rollba
 
 - A Linux VM (**Ubuntu/Debian, RHEL-like, or Photon**) with:
   - at least **2 NICs** (one public/egress, one private trunk),
-  - at least **100 GB** free disk,
+  - at least **100 GB** free disk (default; configurable via `jumpbox.min_disk_gb`),
   - running on vSphere with the private NIC's portgroup set to a **VLAN trunk (4095)** with **Promiscuous mode / Forged transmits / MAC changes = Accept** and jumbo MTU on the vSwitch.
 - Run **as root, on the jumpbox itself**. The only thing `bootstrap.sh` fetches is the single static `yq` binary (plus `jq`/`openssl` from the OS repos).
 
@@ -77,7 +77,7 @@ If a needed secret is blank, `run.sh` prompts for it (no echo).
 | `routing` | nftables NAT + forwarding, persistent static routes, optional FRR/BGP. |
 | `dns` | BIND9 forward zone + per-VLAN reverse zones, recursion limited to private subnets, pre-created node records. |
 | `dhcp` | Kea DHCPv4 per VLAN, pool = last /26, options MTU=9000 + NTP + domain-search + reservations. |
-| `registry` | Docker + `registry:2` with CA-signed TLS, jumbo-MTU daemon, optional htpasswd auth and pull-through mirror. |
+| `registry` | Docker + `registry:2` (`registry.<domain>`) with CA-signed TLS, jumbo-MTU daemon. **Bound private-only** on its VLAN IP (not exposed on the public NIC). Setup images pulled via a configurable mirror (`registry.image_mirror`, default `mirror.gcr.io/library`) to dodge Docker Hub rate limits. Optional htpasswd auth + pull-through cache. |
 | `labinfo` | Render `/etc/nested-lab/lab-info.txt` customer summary + end-of-run summary. |
 
 ## Network model

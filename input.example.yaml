@@ -10,6 +10,7 @@ jumpbox:
   public_nic: ens192           # the only egress interface
   hostname: jump01
   domain: env1.lab.test
+  min_disk_gb: 100             # preflight fails if '/' has less free than this (default 100)
 
 network:
   private_supernet: 192.168.100.0/22   # all VLAN /24s must fall inside this /22
@@ -36,7 +37,7 @@ dns:
     - { name: esxi01, ip: 192.168.100.51 }
     - { name: esxi02, ip: 192.168.100.52 }
     - { name: esxi03, ip: 192.168.100.53 }
-    - { name: harbor, ip: 192.168.100.10 }
+    - { name: registry, ip: 192.168.100.10 }
 
 dhcp:
   lease_time: 86400            # pool auto = last /26 of each VLAN /24 (.193-.254)
@@ -73,11 +74,12 @@ certs:
   backup_path: /root/lab-ca-backup
 
 registry:                      # plain OCI registry (CNCF Distribution / registry:2)
-  fqdn: harbor.env1.lab.test
-  ip: 192.168.100.10           # blank -> native VLAN gateway
-  data_dir: /data/harbor
+  fqdn: registry.env1.lab.test
+  ip: 192.168.100.10           # the registry is bound PRIVATE-ONLY on this IP (blank -> native VLAN gateway)
+  data_dir: /data/registry
   auth: false                  # true -> htpasswd auth (admin / REGISTRY_ADMIN_PASSWORD)
-  pull_through:                # optional pull-through cache mirror (single upstream)
+  image_mirror: mirror.gcr.io/library  # pull setup images (registry:2, httpd:2, hello-world) via this Docker Hub mirror to avoid rate limits; blank = Docker Hub direct
+  pull_through:                # optional pull-through cache mirror for nested nodes (single upstream)
     url: ""                    # e.g. https://registry-1.docker.io
     port: 5443
 

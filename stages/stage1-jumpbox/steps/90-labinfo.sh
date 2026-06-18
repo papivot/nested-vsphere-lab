@@ -60,7 +60,7 @@ _labinfo_render() {
   echo ""
   echo "OCI REGISTRY (registry:2)"
   echo "  URL      : https://${REGISTRY_FQDN}/"
-  echo "  IP       : ${HARBOR_IP}"
+  echo "  IP       : ${REGISTRY_ADDR}  (bound private-only)"
   echo "  data dir : ${REGISTRY_DATA}"
   echo "  auth     : ${REGISTRY_AUTH}  $( [[ "$REGISTRY_AUTH" == true ]] && echo '(user: admin; password in secrets.env)' )"
   echo ""

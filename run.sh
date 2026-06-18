@@ -77,7 +77,7 @@ load_secrets
 # shellcheck source=stages/stage1-jumpbox/stage.sh
 source "${STAGE_DIR}/stage.sh"
 compute_derived
-log "Model: ${N_VLANS} VLAN(s), supernet ${SUPERNET}, private NIC ${PRIVATE_NIC}, public NIC ${PUBLIC_NIC}, registry ${REGISTRY_FQDN} (${HARBOR_IP})"
+log "Model: ${N_VLANS} VLAN(s), supernet ${SUPERNET}, private NIC ${PRIVATE_NIC}, public NIC ${PUBLIC_NIC}, registry ${REGISTRY_FQDN} (${REGISTRY_ADDR})"
 
 case "$MODE" in
   run)

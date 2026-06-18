@@ -76,8 +76,9 @@ _verify_roundtrip() {
     require_secret REGISTRY_ADMIN_PASSWORD "registry admin password"
     echo "$REGISTRY_ADMIN_PASSWORD" | docker login "${REGISTRY_FQDN}" -u admin --password-stdin >/dev/null 2>&1 || return 1
   fi
-  docker pull hello-world:latest >/dev/null 2>&1 || return 1
-  docker tag hello-world:latest "${REGISTRY_FQDN}/library/hello-world:verify" >/dev/null 2>&1 || return 1
+  local hw; hw=$(_img hello-world:latest)
+  docker pull "$hw" >/dev/null 2>&1 || return 1
+  docker tag "$hw" "${REGISTRY_FQDN}/library/hello-world:verify" >/dev/null 2>&1 || return 1
   docker push "${REGISTRY_FQDN}/library/hello-world:verify" >/dev/null 2>&1 || return 1
   docker rmi "${REGISTRY_FQDN}/library/hello-world:verify" >/dev/null 2>&1 || true
   docker pull "${REGISTRY_FQDN}/library/hello-world:verify" >/dev/null 2>&1 || return 1

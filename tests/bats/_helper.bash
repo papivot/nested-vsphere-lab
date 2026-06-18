@@ -39,10 +39,11 @@ sample_model() {
   V_DEND=(192.168.100.254 192.168.101.254 192.168.102.254)
   V_REVZONE=(100.168.192.in-addr.arpa 101.168.192.in-addr.arpa 102.168.192.in-addr.arpa)
   V_DHCP=(true true true)
+  V_EXTRA=("" "" "")   # secondary IPs per iface (e.g. the registry IP)
   NATIVE_GW=192.168.100.1
   OS_FAMILY=redhat; NAMED_CACHE_DIR=/var/named; ZONES_DIR=/var/named
   CERTS_DIR=/tmp/nlab; CA_MODE=selfsigned; CA_BUNDLE=/tmp/nlab/ca-bundle.crt
-  REGISTRY_FQDN=harbor.env1.lab.test; HARBOR_IP=192.168.100.10
-  REGISTRY_DATA=/data/harbor; REGISTRY_AUTH=false; ARTIFACTS_DIR=/data/isos
+  REGISTRY_FQDN=registry.env1.lab.test; REGISTRY_ADDR=192.168.100.10
+  REGISTRY_DATA=/data/registry; REGISTRY_AUTH=false; IMAGE_MIRROR=mirror.gcr.io/library; ARTIFACTS_DIR=/data/isos
   LAB_STATE_DIR=/tmp/nlab
 }

@@ -8,7 +8,7 @@ setup() { load_libs; source_step 90-labinfo.sh; sample_model; }
   run _labinfo_render
   [[ "$output" == *"VLAN 100 (native)"* ]]
   [[ "$output" == *"192.168.100.193 - 192.168.100.254"* ]]
-  [[ "$output" == *"https://harbor.env1.lab.test/"* ]]
+  [[ "$output" == *"https://registry.env1.lab.test/"* ]]
   [[ "$output" == *"registry:2"* ]]
   [[ "$output" == *"/tmp/nlab/ca-bundle.crt"* ]]
 }

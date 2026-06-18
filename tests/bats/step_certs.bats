@@ -10,7 +10,7 @@ teardown() { rm -rf "$TMP"; }
 
 @test "leaf SAN includes registry FQDN and IP" {
   run _leaf_san
-  [ "$output" = "DNS:harbor.env1.lab.test,IP:192.168.100.10" ]
+  [ "$output" = "DNS:registry.env1.lab.test,IP:192.168.100.10" ]
 }
 
 @test "self-signed CA + leaf are generated and verify" {
@@ -28,7 +28,7 @@ teardown() { rm -rf "$TMP"; }
   if ! openssl req -help 2>&1 | grep -q -- '-addext'; then skip "openssl lacks -addext"; fi
   _certs_pki "$CERTS_DIR"
   run openssl x509 -in "$CERTS_DIR/registry.crt" -noout -text
-  [[ "$output" == *"DNS:harbor.env1.lab.test"* ]]
+  [[ "$output" == *"DNS:registry.env1.lab.test"* ]]
   [[ "$output" == *"192.168.100.10"* ]]
 }
 

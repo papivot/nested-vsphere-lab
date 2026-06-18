@@ -28,17 +28,18 @@ step_registry() {
   cp "$CA_BUNDLE" "/etc/docker/certs.d/${REGISTRY_FQDN}/ca.crt"
 
   mkdir -p "$REGISTRY_DATA"
-  ensure_line /etc/hosts "${HARBOR_IP} ${REGISTRY_FQDN}"
+  ensure_line /etc/hosts "${REGISTRY_ADDR} ${REGISTRY_FQDN}"
 
-  log "Pulling registry:2 image"
-  docker pull registry:2 >/dev/null || die "could not pull registry:2 (check egress/NAT)."
+  local rimg; rimg=$(_img registry:2)
+  log "Pulling ${rimg}"
+  docker pull "$rimg" >/dev/null || die "could not pull ${rimg} (check egress/NAT or registry.image_mirror)."
 
   # ---- optional htpasswd auth ----
   local -a AUTH_ARGS=()
   if [[ "$REGISTRY_AUTH" == "true" ]]; then
     require_secret REGISTRY_ADMIN_PASSWORD "registry admin password"
     mkdir -p "${REGISTRY_DATA}/auth"
-    docker run --rm --entrypoint htpasswd httpd:2 -Bbn admin "$REGISTRY_ADMIN_PASSWORD" \
+    docker run --rm --entrypoint htpasswd "$(_img httpd:2)" -Bbn admin "$REGISTRY_ADMIN_PASSWORD" \
       > "${REGISTRY_DATA}/auth/htpasswd" 2>/dev/null || die "failed to generate htpasswd."
     AUTH_ARGS=(
       -v "${REGISTRY_DATA}/auth:/auth:ro"
@@ -49,9 +50,11 @@ step_registry() {
   fi
 
   # ---- (re)create the registry container with TLS ----
+  # Publish ONLY on the private VLAN IP (REGISTRY_ADDR) so the registry is not
+  # exposed on the jumpbox public NIC / outside world.
   docker rm -f "$REGISTRY_NAME" >/dev/null 2>&1 || true
   docker run -d --restart=always --name "$REGISTRY_NAME" \
-    -p 443:5000 \
+    -p "${REGISTRY_ADDR}:443:5000" \
     -v "${REGISTRY_DATA}:/var/lib/registry" \
     -v "${CERTS_DIR}/registry.crt:/certs/registry.crt:ro" \
     -v "${CERTS_DIR}/registry.key:/certs/registry.key:ro" \
@@ -59,8 +62,8 @@ step_registry() {
     -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/registry.crt \
     -e REGISTRY_HTTP_TLS_KEY=/certs/registry.key \
     "${AUTH_ARGS[@]}" \
-    registry:2 >/dev/null
-  ok "registry:2 running at https://${REGISTRY_FQDN}/ (auth=${REGISTRY_AUTH})."
+    "$rimg" >/dev/null
+  ok "registry bound to ${REGISTRY_ADDR}:443 (private VLAN only) -> https://${REGISTRY_FQDN}/ (auth=${REGISTRY_AUTH})."
 
   # ---- optional pull-through mirror ----
   local pt_url pt_port
@@ -70,7 +73,7 @@ step_registry() {
     docker rm -f "$REGISTRY_MIRROR_NAME" >/dev/null 2>&1 || true
     mkdir -p "${REGISTRY_DATA}-mirror"
     docker run -d --restart=always --name "$REGISTRY_MIRROR_NAME" \
-      -p "${pt_port}:5000" \
+      -p "${REGISTRY_ADDR}:${pt_port}:5000" \
       -v "${REGISTRY_DATA}-mirror:/var/lib/registry" \
       -v "${CERTS_DIR}/registry.crt:/certs/registry.crt:ro" \
       -v "${CERTS_DIR}/registry.key:/certs/registry.key:ro" \
@@ -78,7 +81,7 @@ step_registry() {
       -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/registry.crt \
       -e REGISTRY_HTTP_TLS_KEY=/certs/registry.key \
       -e "REGISTRY_PROXY_REMOTEURL=${pt_url}" \
-      registry:2 >/dev/null
+      "$rimg" >/dev/null
     ok "pull-through mirror of ${pt_url} on :${pt_port}."
   fi
 

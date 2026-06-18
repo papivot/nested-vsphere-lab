@@ -9,7 +9,7 @@
 # ============================================================================
 
 # subjectAltName string for the registry leaf (testable)
-_leaf_san() { printf 'DNS:%s,IP:%s' "$REGISTRY_FQDN" "$HARBOR_IP"; }
+_leaf_san() { printf 'DNS:%s,IP:%s' "$REGISTRY_FQDN" "$REGISTRY_ADDR"; }
 
 # Generate CA (+ optional intermediate) + CA bundle + registry leaf into $1.
 # No trust-store changes, no chown root, no backup -- pure crypto + files.

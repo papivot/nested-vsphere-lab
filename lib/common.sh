@@ -130,3 +130,11 @@ is_ipv4() {
   local IFS=. o; read -r -a o <<<"$1"
   local n; for n in "${o[@]}"; do (( n <= 255 )) || return 1; done
 }
+
+# _img <official-image>  - resolve a Docker Hub official image through the
+# configured mirror (IMAGE_MIRROR, e.g. mirror.gcr.io/library) to avoid Docker
+# Hub rate limits. Empty IMAGE_MIRROR -> use the bare name (Docker Hub direct).
+_img() {
+  local m="${IMAGE_MIRROR:-}"
+  if [[ -n "$m" ]]; then printf '%s/%s' "${m%/}" "$1"; else printf '%s' "$1"; fi
+}

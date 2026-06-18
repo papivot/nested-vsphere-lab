@@ -36,18 +36,22 @@ _net_render_debian() {
   echo "      mtu: ${MTU_PRIVATE}"
   echo "      addresses:"
   for ((i=0; i<N_VLANS; i++)); do
-    [[ "${V_ISNATIVE[i]}" == 1 ]] && echo "        - ${V_GW[i]}/${V_PREFIX[i]}"
+    [[ "${V_ISNATIVE[i]}" == 1 ]] || continue
+    echo "        - ${V_GW[i]}/${V_PREFIX[i]}"
+    [[ -n "${V_EXTRA[i]:-}" ]] && echo "        - ${V_EXTRA[i]}/${V_PREFIX[i]}"
   done
   for ((i=0; i<N_VLANS; i++)); do [[ "${V_ISNATIVE[i]}" == 0 ]] && vlans=1; done
   if (( vlans )); then
     echo "  vlans:"
     for ((i=0; i<N_VLANS; i++)); do
       [[ "${V_ISNATIVE[i]}" == 0 ]] || continue
+      local addrs="${V_GW[i]}/${V_PREFIX[i]}"
+      [[ -n "${V_EXTRA[i]:-}" ]] && addrs="${addrs}, ${V_EXTRA[i]}/${V_PREFIX[i]}"
       echo "    ${V_IFACE[i]}:"
       echo "      id: ${V_ID[i]}"
       echo "      link: ${PRIVATE_NIC}"
       echo "      mtu: ${MTU_PRIVATE}"
-      echo "      addresses: [${V_GW[i]}/${V_PREFIX[i]}]"
+      echo "      addresses: [${addrs}]"
     done
   fi
 }
@@ -56,12 +60,14 @@ _net_render_debian() {
 # echoes the args that follow `nmcli con add` for VLAN index $1 (testable unit)
 _net_nmcli_addargs() {
   local i="$1" name="nested-${V_IFACE[$1]}"
+  local addrs="${V_GW[i]}/${V_PREFIX[i]}"
+  [[ -n "${V_EXTRA[i]:-}" ]] && addrs="${addrs},${V_EXTRA[i]}/${V_PREFIX[i]}"
   if [[ "${V_ISNATIVE[i]}" == 1 ]]; then
-    printf 'type ethernet con-name %s ifname %s ipv4.method manual ipv4.addresses %s/%s ethernet.mtu %s autoconnect yes' \
-      "$name" "$PRIVATE_NIC" "${V_GW[i]}" "${V_PREFIX[i]}" "$MTU_PRIVATE"
+    printf 'type ethernet con-name %s ifname %s ipv4.method manual ipv4.addresses %s ethernet.mtu %s autoconnect yes' \
+      "$name" "$PRIVATE_NIC" "$addrs" "$MTU_PRIVATE"
   else
-    printf 'type vlan con-name %s dev %s id %s ipv4.method manual ipv4.addresses %s/%s ethernet.mtu %s autoconnect yes' \
-      "$name" "$PRIVATE_NIC" "${V_ID[i]}" "${V_GW[i]}" "${V_PREFIX[i]}" "$MTU_PRIVATE"
+    printf 'type vlan con-name %s dev %s id %s ipv4.method manual ipv4.addresses %s ethernet.mtu %s autoconnect yes' \
+      "$name" "$PRIVATE_NIC" "${V_ID[i]}" "$addrs" "$MTU_PRIVATE"
   fi
 }
 
@@ -84,7 +90,11 @@ _net_render_photon_main() {
   echo "[Match]"; echo "Name=${PRIVATE_NIC}"
   echo ""; echo "[Link]"; echo "MTUBytes=${MTU_PRIVATE}"
   echo ""; echo "[Network]"
-  for ((i=0; i<N_VLANS; i++)); do [[ "${V_ISNATIVE[i]}" == 1 ]] && echo "Address=${V_GW[i]}/${V_PREFIX[i]}"; done
+  for ((i=0; i<N_VLANS; i++)); do
+    [[ "${V_ISNATIVE[i]}" == 1 ]] || continue
+    echo "Address=${V_GW[i]}/${V_PREFIX[i]}"
+    [[ -n "${V_EXTRA[i]:-}" ]] && echo "Address=${V_EXTRA[i]}/${V_PREFIX[i]}"
+  done
   for ((i=0; i<N_VLANS; i++)); do [[ "${V_ISNATIVE[i]}" == 0 ]] && echo "VLAN=${V_IFACE[i]}"; done
 }
 _net_render_photon_netdev() {
@@ -99,6 +109,7 @@ _net_render_photon_network() {
   echo "[Match]"; echo "Name=${V_IFACE[i]}"
   echo ""; echo "[Link]"; echo "MTUBytes=${MTU_PRIVATE}"
   echo ""; echo "[Network]"; echo "Address=${V_GW[i]}/${V_PREFIX[i]}"
+  [[ -n "${V_EXTRA[i]:-}" ]] && echo "Address=${V_EXTRA[i]}/${V_PREFIX[i]}"
 }
 
 _net_apply_photon() {

@@ -45,3 +45,18 @@ setup() { load_libs; source_step 30-networking.sh; sample_model; }
   [[ "$output" == *"Id=101"* ]]
   [[ "$output" == *"MTUBytes=9000"* ]]
 }
+
+@test "registry secondary IP is added on its VLAN interface (all 3 renderers)" {
+  V_EXTRA=(192.168.100.10 "" "")    # registry IP held on the native iface
+  run _net_render_debian
+  [[ "$output" == *"- 192.168.100.10/24"* ]]
+  run _net_nmcli_addargs 0
+  [[ "$output" == *"ipv4.addresses 192.168.100.1/24,192.168.100.10/24"* ]]
+  run _net_render_photon_main
+  [[ "$output" == *"Address=192.168.100.10/24"* ]]
+}
+
+@test "no secondary IP rendered when V_EXTRA is empty" {
+  run _net_render_debian
+  [[ "$output" != *"192.168.100.10"* ]]
+}

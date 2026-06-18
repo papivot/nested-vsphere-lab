@@ -12,16 +12,17 @@ STEPS=(preflight base_os certs networking routing dns dhcp registry labinfo)
 # ---- shared lab paths (mirrors group_vars/all.yml lab.*) ----
 LAB_STATE_DIR=/etc/nested-lab
 LAB_INFO_FILE=/etc/nested-lab/lab-info.txt
-MIN_DISK_GB=100
+# MIN_DISK_GB is set in compute_derived from jumpbox.min_disk_gb (default 100).
 
 # Per-VLAN derived arrays (the Bash equivalent of Ansible's vlans_computed).
-declare -a V_ID V_NAME V_CIDR V_DHCP V_GW V_PREFIX V_NETMASK V_IFACE V_ISNATIVE V_DSTART V_DEND V_REVZONE
+declare -a V_ID V_NAME V_CIDR V_DHCP V_GW V_PREFIX V_NETMASK V_IFACE V_ISNATIVE V_DSTART V_DEND V_REVZONE V_EXTRA
 
 compute_derived() {
   PRIVATE_NIC=$(cfg '.jumpbox.private_nic' 'ens224')
   PUBLIC_NIC=$(cfg '.jumpbox.public_nic' 'ens192')
   JB_HOST=$(cfg '.jumpbox.hostname' 'jump01')
   DOMAIN=$(cfg '.jumpbox.domain' 'env1.lab.test')
+  MIN_DISK_GB=$(cfg '.jumpbox.min_disk_gb' '100')
   MTU_PRIVATE=$(cfg '.mtu.private' '9000')
   NATIVE_VLAN=$(cfg '.network.native_vlan' '100')
   SUPERNET=$(cfg '.network.private_supernet' '192.168.100.0/22')
@@ -50,15 +51,30 @@ compute_derived() {
   CERTS_DIR=$(cfg '.certs.dir' '/etc/nested-lab/ca')
   CA_MODE=$(cfg '.certs.ca_mode' 'selfsigned')
   CA_BUNDLE="${CERTS_DIR}/ca-bundle.crt"
-  REGISTRY_FQDN=$(cfg '.registry.fqdn' "harbor.${DOMAIN}")
+  REGISTRY_FQDN=$(cfg '.registry.fqdn' "registry.${DOMAIN}")
   REGISTRY_IP=$(cfg '.registry.ip' '')
-  HARBOR_IP="${REGISTRY_IP:-$NATIVE_GW}"
-  REGISTRY_DATA=$(cfg '.registry.data_dir' '/data/harbor')
+  REGISTRY_ADDR="${REGISTRY_IP:-$NATIVE_GW}"   # IP the registry is reached at / bound to
+  REGISTRY_DATA=$(cfg '.registry.data_dir' '/data/registry')
   REGISTRY_AUTH=$(cfg_bool '.registry.auth' 'false')
+  # Pull setup images through a Docker Hub mirror to dodge rate limits.
+  IMAGE_MIRROR=$(cfg '.registry.image_mirror' 'mirror.gcr.io/library')
   ARTIFACTS_DIR=$(cfg '.artifacts.dir' '/data/isos')
 
-  export PRIVATE_NIC PUBLIC_NIC JB_HOST DOMAIN MTU_PRIVATE NATIVE_VLAN SUPERNET N_VLANS NATIVE_GW
-  export CERTS_DIR CA_MODE CA_BUNDLE REGISTRY_FQDN REGISTRY_IP HARBOR_IP REGISTRY_DATA REGISTRY_AUTH ARTIFACTS_DIR
+  # The registry container binds the host's :443, so when registry.ip is a
+  # dedicated address (not a VLAN gateway) the jumpbox must OWN that IP for the
+  # registry to be reachable at registry.fqdn. networking adds it as a secondary
+  # address on the VLAN whose subnet contains it. V_EXTRA[i] = that IP, or "".
+  for ((i=0; i<N_VLANS; i++)); do V_EXTRA[i]=""; done
+  if [[ -n "$REGISTRY_IP" ]]; then
+    for ((i=0; i<N_VLANS; i++)); do
+      if ip_in_cidr "$REGISTRY_IP" "${V_CIDR[i]}" && [[ "$REGISTRY_IP" != "${V_GW[i]}" ]]; then
+        V_EXTRA[i]="$REGISTRY_IP"; break
+      fi
+    done
+  fi
+
+  export PRIVATE_NIC PUBLIC_NIC JB_HOST DOMAIN MIN_DISK_GB MTU_PRIVATE NATIVE_VLAN SUPERNET N_VLANS NATIVE_GW
+  export CERTS_DIR CA_MODE CA_BUNDLE REGISTRY_FQDN REGISTRY_IP REGISTRY_ADDR REGISTRY_DATA REGISTRY_AUTH IMAGE_MIRROR ARTIFACTS_DIR
 }
 
 # Source every step + rollback definition.
