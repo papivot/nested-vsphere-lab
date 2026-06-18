@@ -7,17 +7,39 @@
 
 step_dhcp() {
   pkg_install "${KEA_PACKAGES[@]}"
-  mkdir -p /etc/kea /var/lib/kea
+  local kuser; kuser=$(_kea_user)
+  mkdir -p /etc/kea /var/lib/kea /var/log/kea
+  if [[ -n "$kuser" ]]; then chown "$kuser" /var/lib/kea /var/log/kea 2>/dev/null || true; fi
 
   # `< <(fn)` (not a pipe) so FILE_CHANGED is set in this shell, not a subshell.
   write_file "$KEA_CONF" 0644 < <(_dhcp_config)
   local changed="$FILE_CHANGED"
 
-  "$KEA_BIN" -t "$KEA_CONF" >/dev/null || die "Kea config failed validation (${KEA_BIN} -t)."
+  # Validate AS the Kea runtime user (e.g. _kea on Ubuntu). Running `kea-dhcp4 -t`
+  # as root trips the kea-dhcp4 AppArmor profile (dac_override DENIED), because the
+  # confined root process can't traverse /etc/kea -- which the service user owns.
+  _kea_validate "$kuser" || die "Kea config failed validation (${KEA_BIN} -t)."
 
   svc_enable_now "$KEA_SERVICE"
   [[ "$changed" == yes ]] && svc_restart "$KEA_SERVICE"
   ok "Kea DHCPv4 active (${KEA_SERVICE})."
+}
+
+# The system user the Kea service runs as (Ubuntu/Debian: _kea). Empty if none.
+_kea_user() {
+  if   id _kea >/dev/null 2>&1; then echo _kea
+  elif id kea  >/dev/null 2>&1; then echo kea
+  fi
+}
+
+# Run `kea-dhcp4 -t` as the service user so AppArmor/DAC match runtime.
+_kea_validate() {
+  local kuser="$1"
+  if [[ -n "$kuser" ]] && command -v runuser >/dev/null 2>&1; then
+    runuser -u "$kuser" -- "$KEA_BIN" -t "$KEA_CONF"
+  else
+    "$KEA_BIN" -t "$KEA_CONF"
+  fi
 }
 
 _dhcp_config() {
@@ -69,7 +91,7 @@ _dhcp_config() {
         "interfaces-config": { "interfaces": $ifaces, "dhcp-socket-type": "raw" },
         "lease-database":     { "type": "memfile", "persist": true, "name": "/var/lib/kea/kea-leases4.csv" },
         "valid-lifetime":     $lease,
-        "loggers": [ { "name": "kea-dhcp4", "output_options": [ { "output": "/var/log/kea-dhcp4.log" } ], "severity": "INFO" } ],
+        "loggers": [ { "name": "kea-dhcp4", "output_options": [ { "output": "/var/log/kea/kea-dhcp4.log" } ], "severity": "INFO" } ],
         "subnet4": $subnets
     } }'
 }
