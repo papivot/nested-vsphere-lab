@@ -7,7 +7,7 @@
 
 step_dhcp() {
   pkg_install "${KEA_PACKAGES[@]}"
-  local kuser; kuser=$(_kea_user)
+  local kuser; kuser=$(kea_user)
   mkdir -p /etc/kea /var/lib/kea /var/log/kea
   if [[ -n "$kuser" ]]; then chown "$kuser" /var/lib/kea /var/log/kea 2>/dev/null || true; fi
 
@@ -15,31 +15,12 @@ step_dhcp() {
   write_file "$KEA_CONF" 0644 < <(_dhcp_config)
   local changed="$FILE_CHANGED"
 
-  # Validate AS the Kea runtime user (e.g. _kea on Ubuntu). Running `kea-dhcp4 -t`
-  # as root trips the kea-dhcp4 AppArmor profile (dac_override DENIED), because the
-  # confined root process can't traverse /etc/kea -- which the service user owns.
-  _kea_validate "$kuser" || die "Kea config failed validation (${KEA_BIN} -t)."
+  # Validate AS the Kea runtime user (kea_validate); root trips AppArmor.
+  kea_validate || die "Kea config failed validation (${KEA_BIN} -t)."
 
   svc_enable_now "$KEA_SERVICE"
   [[ "$changed" == yes ]] && svc_restart "$KEA_SERVICE"
   ok "Kea DHCPv4 active (${KEA_SERVICE})."
-}
-
-# The system user the Kea service runs as (Ubuntu/Debian: _kea). Empty if none.
-_kea_user() {
-  if   id _kea >/dev/null 2>&1; then echo _kea
-  elif id kea  >/dev/null 2>&1; then echo kea
-  fi
-}
-
-# Run `kea-dhcp4 -t` as the service user so AppArmor/DAC match runtime.
-_kea_validate() {
-  local kuser="$1"
-  if [[ -n "$kuser" ]] && command -v runuser >/dev/null 2>&1; then
-    runuser -u "$kuser" -- "$KEA_BIN" -t "$KEA_CONF"
-  else
-    "$KEA_BIN" -t "$KEA_CONF"
-  fi
 }
 
 _dhcp_config() {

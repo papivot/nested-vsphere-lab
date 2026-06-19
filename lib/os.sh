@@ -84,3 +84,21 @@ svc_restart()     { systemctl restart "$1"; }
 svc_reload_units(){ systemctl daemon-reload; }
 svc_stop_disable(){ systemctl disable --now "$1" 2>/dev/null || true; }
 svc_is_active()   { systemctl is-active --quiet "$1"; }
+
+# ---- Kea helpers (shared by the dhcp step and verify) ----
+# The system user the Kea service runs as (Ubuntu/Debian: _kea). Empty if none.
+kea_user() {
+  if   id _kea >/dev/null 2>&1; then echo _kea
+  elif id kea  >/dev/null 2>&1; then echo kea
+  fi
+}
+# Run `kea-dhcp4 -t` AS the service user so AppArmor/DAC match runtime: running
+# it as root trips the kea-dhcp4 AppArmor profile (dac_override DENIED).
+kea_validate() {
+  local u; u=$(kea_user)
+  if [[ -n "$u" ]] && command -v runuser >/dev/null 2>&1; then
+    runuser -u "$u" -- "$KEA_BIN" -t "$KEA_CONF"
+  else
+    "$KEA_BIN" -t "$KEA_CONF"
+  fi
+}

@@ -47,7 +47,7 @@ verify_main() {
 
   # ---- Kea ----
   grep -q interface-mtu "$KEA_CONF" && _t_ok "Kea advertises interface-mtu (option 26)" || _t_fail "Kea missing interface-mtu"
-  "$KEA_BIN" -t "$KEA_CONF" >/dev/null 2>&1 && _t_ok "Kea config valid" || _t_fail "Kea config invalid"
+  if kea_validate >/dev/null 2>&1; then _t_ok "Kea config valid"; else _t_fail "Kea config invalid"; fi
 
   # ---- CA / registry cert ----
   if openssl verify -CAfile "$CA_BUNDLE" "${CERTS_DIR}/registry.crt" >/dev/null 2>&1; then
