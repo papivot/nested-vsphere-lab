@@ -10,9 +10,11 @@
 
 # unique private interface list (helper used by render + firewall)
 _priv_iface_list() {
-  local i ifaces=()
+  local i ifaces=() seen
   for ((i=0; i<N_VLANS; i++)); do
-    printf '%s\n' "${ifaces[@]}" 2>/dev/null | grep -qxF "${V_IFACE[i]}" || ifaces+=("${V_IFACE[i]}")
+    seen=""
+    if ((${#ifaces[@]})); then printf '%s\n' "${ifaces[@]}" | grep -qxF "${V_IFACE[i]}" && seen=1; fi
+    [[ -z "$seen" ]] && ifaces+=("${V_IFACE[i]}")
   done
   local IFS=,; echo "${ifaces[*]}"
 }
@@ -21,23 +23,30 @@ _nft_render() {
   local nat; nat=$(cfg_bool '.routing.nat' 'true')
   echo "#!/usr/sbin/nft -f"
   echo "# Managed by nested-vsphere-lab (routing). Egress ONLY via the public NIC."
-  echo "flush ruleset"
+  echo "# Uses uniquely-named tables and NEVER flushes the whole ruleset, so it"
+  echo "# coexists with Docker's own 'ip nat' rules instead of clobbering them"
+  echo "# (and vice-versa). Forward policy is accept so Docker container traffic"
+  echo "# is not dropped; we only block unsolicited NEW flows into the private fabric."
   echo ""
   echo "define PUBLIC = \"${PUBLIC_NIC}\""
   echo "define PRIV_IFACES = { $(_priv_iface_list) }"
   echo ""
-  echo "table inet filter {"
-  echo "    chain input   { type filter hook input priority 0; policy accept; }"
+  echo "# replace ONLY our tables on (re)load (add-then-delete makes it idempotent)"
+  echo "add table inet nested_lab_filter"
+  echo "delete table inet nested_lab_filter"
+  echo "add table ip nested_lab_nat"
+  echo "delete table ip nested_lab_nat"
+  echo ""
+  echo "table inet nested_lab_filter {"
   echo "    chain forward {"
-  echo "        type filter hook forward priority 0; policy drop;"
+  echo "        type filter hook forward priority 0; policy accept;"
   echo "        ct state established,related accept"
   echo "        iifname \$PRIV_IFACES accept"
   echo "        oifname \$PRIV_IFACES ct state new drop"
   echo "    }"
-  echo "    chain output  { type filter hook output priority 0; policy accept; }"
   echo "}"
   echo ""
-  echo "table ip nat {"
+  echo "table ip nested_lab_nat {"
   echo "    chain postrouting {"
   echo "        type nat hook postrouting priority srcnat; policy accept;"
   [[ "$nat" == "true" ]] && echo "        oifname \$PUBLIC masquerade"
@@ -100,7 +109,8 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStart=${NFT_BIN} -f ${LAB_STATE_DIR}/nftables.conf
 ExecReload=${NFT_BIN} -f ${LAB_STATE_DIR}/nftables.conf
-ExecStop=${NFT_BIN} flush ruleset
+ExecStop=-${NFT_BIN} delete table inet nested_lab_filter
+ExecStop=-${NFT_BIN} delete table ip nested_lab_nat
 
 [Install]
 WantedBy=multi-user.target

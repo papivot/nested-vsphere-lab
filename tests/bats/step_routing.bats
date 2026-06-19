@@ -23,6 +23,14 @@ setup() { load_libs; source_step 40-routing.sh; sample_model; }
   [[ "$output" != *"masquerade"* ]]
 }
 
+@test "nft uses uniquely-named tables and never flushes the whole ruleset (Docker coexistence)" {
+  run _nft_render
+  [[ "$output" == *"table ip nested_lab_nat"* ]]
+  [[ "$output" == *"table inet nested_lab_filter"* ]]
+  [[ "$output" != *"flush ruleset"* ]]
+  [[ "$output" != *"table ip nat {"* ]]   # must NOT reuse Docker's table name
+}
+
 @test "routes render uses ip route replace" {
   slen '.routing.static_routes' 1
   sset '.routing.static_routes[0].dest' 192.168.103.0/24
