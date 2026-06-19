@@ -1,8 +1,0 @@
----
-- name: "Install Docker engine + compose plugin (Ubuntu/Debian)"
-  ansible.builtin.apt:
-    name:
-      - docker.io
-      - docker-compose-v2
-    state: present
-    update_cache: true

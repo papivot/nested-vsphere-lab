@@ -1,5 +1,0 @@
----
-kea_packages: [kea]
-kea_service: kea-dhcp4
-kea_conf: /etc/kea/kea-dhcp4.conf
-kea_bin: kea-dhcp4
