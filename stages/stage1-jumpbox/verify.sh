@@ -26,7 +26,12 @@ verify_main() {
   # ---- routing / NAT ----
   [[ "$(cat /proc/sys/net/ipv4/ip_forward)" == "1" ]] && _t_ok "ip_forward enabled" || _t_fail "ip_forward disabled"
   if [[ "$(cfg_bool '.routing.nat' 'true')" == "true" ]]; then
-    nft list ruleset 2>/dev/null | grep -q masquerade && _t_ok "nft masquerade present" || _t_fail "nft masquerade missing"
+    # Check OUR table specifically (a generic grep would also match Docker's masquerade).
+    if nft list table ip nested_lab_nat 2>/dev/null | grep -q masquerade; then
+      _t_ok "nft masquerade present (nested_lab_nat)"
+    else
+      _t_fail "nft masquerade missing from table ip nested_lab_nat"
+    fi
   fi
   if curl -fsS -I --max-time 8 https://www.google.com >/dev/null 2>&1; then _t_ok "egress via NAT works"; else warn "egress check failed (warning only)"; fi
 
