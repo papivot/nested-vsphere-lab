@@ -92,25 +92,16 @@ step_preflight() {
     _pf "Datastore '${UNDERLYING_DATASTORE}' not found on underlying target."
   fi
 
-  # ---- Underlying: trunk portgroup exists ----
-  # On standalone ESXi the trunk is a standard-switch portgroup; on a vCenter it
-  # is (typically) a distributed portgroup. Check the right inventory each way.
-  if [[ "$UNDERLYING_TYPE" == "vcenter" ]]; then
-    # A distributed portgroup is govc type 'g'; a standard/opaque network is 'n'.
-    if govc find -k / -type g -name "${UNDERLYING_PG}" 2>/dev/null | grep -q . \
-       || govc find -k / -type n -name "${UNDERLYING_PG}" 2>/dev/null | grep -q .; then
-      ok "Network '${UNDERLYING_PG}' found on the underlying vCenter."
-    else
-      _pf "Network '${UNDERLYING_PG}' not found on the underlying vCenter (need a VLAN-trunk portgroup)."
-    fi
+  # ---- Underlying: trunk portgroup / network exists ----
+  # A standard-vSwitch portgroup (ESXi) and a distributed portgroup (vCenter)
+  # both appear in the inventory as network objects: 'n' (Network) or
+  # 'g' (DistributedVirtualPortgroup). Look it up with govc find — avoids the
+  # version-sensitive host.portgroup.info JSON shape.
+  if govc find -k / -type n -name "${UNDERLYING_PG}" 2>/dev/null | grep -q . \
+     || govc find -k / -type g -name "${UNDERLYING_PG}" 2>/dev/null | grep -q .; then
+    ok "Network/portgroup '${UNDERLYING_PG}' found on the underlying target."
   else
-    if govc host.portgroup.info -k -json 2>/dev/null \
-        | jq -r '.hostPortGroup[].spec.name' 2>/dev/null \
-        | grep -qxF "${UNDERLYING_PG}"; then
-      ok "Portgroup '${UNDERLYING_PG}' found on underlying ESXi."
-    else
-      _pf "Portgroup '${UNDERLYING_PG}' not found on underlying ESXi. Create a VLAN trunk portgroup first."
-    fi
+    _pf "Network/portgroup '${UNDERLYING_PG}' not found on the underlying target. Create a VLAN-trunk portgroup first."
   fi
 
   # ---- Underlying ESXi: free disk space estimate ----
