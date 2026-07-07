@@ -74,7 +74,7 @@ certs:
   backup_path: /root/lab-ca-backup
 
 registry:                      # plain OCI registry (CNCF Distribution / registry:2)
-  fqdn: registry.env1.lab.test
+  name: registry               # FQDN = <name>.<jumpbox.domain> (match a dns.records entry). Set 'fqdn:' instead to override with a full name.
   ip: 192.168.100.10           # the registry is bound PRIVATE-ONLY on this IP (blank -> native VLAN gateway)
   data_dir: /data/registry
   auth: false                  # true -> htpasswd auth (admin / REGISTRY_ADMIN_PASSWORD)
@@ -85,3 +85,78 @@ registry:                      # plain OCI registry (CNCF Distribution / registr
 
 artifacts:
   dir: /data/isos              # local OVA/ISO folder (consumed by Stage 2)
+
+# ============================================================================
+# Stage 2 — nested vSphere (VCF/vSphere 9.1)
+# Names and IPs for nested VMs are sourced from dns.records above.
+# VLAN references use names defined in network.vlans above.
+# Secrets (passwords) live in secrets.env — never here.
+# ============================================================================
+stage2:
+  profile: vds_foundation_lb     # vds_foundation_lb | vds_avi | nsx_vpc | nsx_vlan
+
+  underlying:
+    type: esxi                   # esxi (standalone host) | vcenter (existing vCenter)
+    host: 10.0.0.5               # ESXi IP/hostname, or the vCenter IP/hostname
+    username: root               # root for esxi; administrator@vsphere.local for vcenter
+    datastore: datastore1        # target datastore for nested VMs
+    portgroup_trunk: VM Network  # VLAN-trunk portgroup (std-switch PG on esxi; distributed PG on vcenter)
+    # Required only when type: vcenter — placement for the nested VMs + VCSA:
+    datacenter: ""               # e.g. Datacenter
+    cluster: ""                  # e.g. Cluster1
+
+  esxi:
+    ova: Nested_ESXi9.0_Appliance_Template.ova   # filename under artifacts.dir
+    ova_network: VM Network      # the OVF network label inside the OVA (mapped to portgroup_trunk)
+    dns_prefix: esxi             # matches esxi01/02/03 in dns.records; derives count + IPs + FQDNs
+    cpu: 8
+    mem_gb: 48
+    # disk[0] = boot. Data disks depend on cluster.vsan.mode below:
+    #   OSA (default): exactly one 'vsan_cache' + one 'vsan_capacity' disk, of
+    #                  DISTINCT sizes (matched by size at claim time).
+    #   ESA:           one or more 'vsan_data' disks (all pooled; no cache).
+    disks:
+      - { size_gb: 32,  label: boot }
+      - { size_gb: 24,  label: vsan_cache }      # OSA cache tier
+      - { size_gb: 400, label: vsan_capacity }   # OSA / ESA data tier
+    # For ESA instead, use e.g.:
+    #   - { size_gb: 32,  label: boot }
+    #   - { size_gb: 400, label: vsan_data }
+    #   - { size_gb: 400, label: vsan_data }
+
+  vcsa:
+    iso: VMware-VCSA-all-9.0.0.0.iso   # VCSA installer ISO under artifacts.dir
+    iso_mount: /mnt/vcsa-iso           # where the ISO is mounted for vcsa-deploy
+    dns_name: vcsa               # looked up in dns.records; derives IP + FQDN
+    sso_domain: vsphere.local
+    size: tiny                   # tiny | small | medium | large
+
+  cluster:
+    name: nested-cluster
+    datacenter: nested-dc
+    vds_name: nested-vds
+    vds_version: 9.0.0           # VDS product version
+    uplink_pnic: vmnic1          # nested ESXi pNIC used as the VDS uplink (vmnic0 stays mgmt)
+    vsan:
+      mode: osa                  # osa (default; lighter, recommended for nested) | esa (memory-intensive)
+      ftt: 1                     # FTT=1 RAID-1 (minimum for 3 hosts)
+      datastore_name: vsanDatastore
+
+  supervisor:
+    name: supervisor
+    mgmt_network: mgmt           # DVPG for control-plane + FLB mgmt (network.vlans[].name)
+    workload_network: workload0  # DVPG for FLB frontend + workload nodes (network.vlans[].name)
+    control_plane_size: tiny     # tiny | small | medium | large
+    control_plane_count: 1       # supervisor control-plane VMs (1 for a light lab; 3 for HA)
+    service_cidr: 10.96.0.0/23   # internal k8s ClusterIP range
+    content_library: nested-lab-lib
+    storage_policy: vsan-default
+    # IP ranges (start + count). Must sit OUTSIDE the DHCP pool (.193-.254) and
+    # avoid the ESXi/VCSA static IPs. The VIP range must be routed to the
+    # workload network (see routing.static_routes above).
+    ranges:
+      control_plane: { start: 192.168.100.60,  count: 5 }    # CP node mgmt IPs (mgmt net)
+      flb_management: { start: 192.168.100.70,  count: 3 }    # FLB mgmt-persona IPs (mgmt net)
+      flb_frontend:   { start: 192.168.101.2,   count: 10 }   # FLB frontend IPs (workload net)
+      workload_node:  { start: 192.168.101.100, count: 50 }   # workload node IPs (workload net)
+      vip:            { start: 192.168.103.10,  count: 100 }  # LB VIPs (routed range)

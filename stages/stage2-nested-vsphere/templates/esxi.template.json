@@ -1,0 +1,27 @@
+{
+  "DiskProvisioning": "thin",
+  "IPAllocationPolicy": "fixedPolicy",
+  "IPProtocol": "IPv4",
+  "PropertyMapping": [
+    { "Key": "guestinfo.hostname",   "Value": "${ESXI_HOST_NAME}" },
+    { "Key": "guestinfo.ipaddress",  "Value": "${ESXI_HOST_IP}" },
+    { "Key": "guestinfo.netmask",    "Value": "${ESXI_NETMASK}" },
+    { "Key": "guestinfo.gateway",    "Value": "${ESXI_GW}" },
+    { "Key": "guestinfo.vlan",       "Value": "" },
+    { "Key": "guestinfo.dns",        "Value": "${NATIVE_GW}" },
+    { "Key": "guestinfo.domain",     "Value": "${DOMAIN}" },
+    { "Key": "guestinfo.ntp",        "Value": "${NTP_SERVER}" },
+    { "Key": "guestinfo.syslog",     "Value": "" },
+    { "Key": "guestinfo.password",   "Value": "${ESXI_ROOT_PASSWORD}" },
+    { "Key": "guestinfo.ssh",        "Value": "True" },
+    { "Key": "guestinfo.createvmfs", "Value": "False" }
+  ],
+  "NetworkMapping": [
+    { "Name": "${ESXI_OVA_NETWORK}", "Network": "${UNDERLYING_PG}" }
+  ],
+  "MarkAsTemplate": false,
+  "PowerOn": false,
+  "InjectOvfEnv": false,
+  "WaitForIP": false,
+  "Name": null
+}

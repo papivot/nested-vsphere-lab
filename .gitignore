@@ -2,6 +2,9 @@
 logs/
 state/
 
+# Local scratch / working samples -- not part of the shipped automation
+scratch/
+
 # Generated / secret material -- never commit
 secrets.env
 secrets.yml

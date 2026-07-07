@@ -1,0 +1,49 @@
+{
+    "__version": "2.13.0",
+    "__comments": "Nested-lab VCSA deploy onto an existing vCenter. Rendered by envsubst from stage.sh-derived variables. Do not put secrets in git.",
+    "new_vcsa": {
+        "vc": {
+            "hostname": "${UNDERLYING_HOST}",
+            "username": "${UNDERLYING_USER}",
+            "password": "${UNDERLYING_PASSWORD}",
+            "deployment_network": "${UNDERLYING_PG}",
+            "datacenter": [
+                "${UNDERLYING_DATACENTER}"
+            ],
+            "datastore": "${UNDERLYING_DATASTORE}",
+            "target": [
+                "${UNDERLYING_CLUSTER}"
+            ]
+        },
+        "appliance": {
+            "thin_disk_mode": true,
+            "deployment_option": "${VCSA_SIZE}",
+            "name": "${VCSA_DNS_NAME}"
+        },
+        "network": {
+            "ip_family": "ipv4",
+            "mode": "static",
+            "system_name": "${VCSA_FQDN}",
+            "ip": "${VCSA_IP}",
+            "prefix": "${VCSA_PREFIX}",
+            "gateway": "${VCSA_GW}",
+            "dns_servers": [
+                "${NATIVE_GW}"
+            ]
+        },
+        "os": {
+            "password": "${VCSA_SSO_PASSWORD}",
+            "ntp_servers": "${NTP_SERVER}",
+            "ssh_enable": true
+        },
+        "sso": {
+            "password": "${VCSA_SSO_PASSWORD}",
+            "domain_name": "${VCSA_SSO_DOMAIN}"
+        }
+    },
+    "ceip": {
+        "settings": {
+            "ceip_enabled": false
+        }
+    }
+}

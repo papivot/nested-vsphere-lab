@@ -17,6 +17,11 @@ source_step() { # $1 = step filename, e.g. 50-dns.sh
   source "$TESTROOT/stages/stage1-jumpbox/steps/$1"
 }
 
+source_step2() { # $1 = stage-2 step filename, e.g. 30-cluster.sh
+  # shellcheck disable=SC1090
+  source "$TESTROOT/stages/stage2-nested-vsphere/steps/$1"
+}
+
 # ---- cfg stub backed by flat variables ----
 _k()  { printf 'STUB_%s'    "$(printf '%s' "$1" | sed 's/[^a-zA-Z0-9]/_/g')"; }
 _kl() { printf 'STUBLEN_%s' "$(printf '%s' "$1" | sed 's/[^a-zA-Z0-9]/_/g')"; }
@@ -46,4 +51,35 @@ sample_model() {
   REGISTRY_FQDN=registry.env1.lab.test; REGISTRY_ADDR=192.168.100.10
   REGISTRY_DATA=/data/registry; REGISTRY_AUTH=false; IMAGE_MIRROR=mirror.gcr.io/library; ARTIFACTS_DIR=/data/isos
   LAB_STATE_DIR=/tmp/nlab
+}
+
+# ---- Stage 2 model fixture (exported so envsubst subprocesses see the vars) ----
+sample_model2() {
+  export STAGE2_DIR="$TESTROOT/stages/stage2-nested-vsphere"
+  export DOMAIN=env1.lab.test NATIVE_GW=192.168.100.1 NTP_SERVER=192.168.100.1
+  # nested ESXi
+  export ESXI_NETMASK=255.255.255.0 ESXI_GW=192.168.100.1 ESXI_ROOT_PASSWORD=labpass
+  export VSAN_MODE=osa ESXI_CACHE_GB=24 ESXI_CAP_GB=400
+  ESXI_DATA_DISK_GB=(24 400)
+  # underlying target (default standalone esxi; tests can flip to vcenter)
+  export UNDERLYING_TYPE=esxi UNDERLYING_HOST=10.0.0.5 UNDERLYING_USER=root UNDERLYING_PASSWORD=labpass
+  export UNDERLYING_PG="VM Network" UNDERLYING_DATASTORE=datastore1
+  export UNDERLYING_DATACENTER=Datacenter UNDERLYING_CLUSTER=Cluster1
+  # nested ESXi import options
+  export ESXI_OVA_NETWORK="VM Network" ESXI_HOST_NAME=esxi01 ESXI_HOST_IP=192.168.100.51
+  export VCSA_SIZE=tiny VCSA_DNS_NAME=vcsa VCSA_FQDN=vcsa.env1.lab.test
+  export VCSA_IP=192.168.100.50 VCSA_PREFIX=24 VCSA_GW=192.168.100.1
+  export VCSA_SSO_PASSWORD=labpass VCSA_SSO_DOMAIN=vsphere.local
+  # Supervisor / Foundation LB template
+  export SUPERVISOR_VM_COUNT=1 SUPERVISOR_SIZE=TINY SUPERVISOR_NAME=supervisor
+  export VKS_STORAGE_POLICY=vsan-default
+  export VKS_MGMT_NETWORK1=dvportgroup-11 VKS_WKLD_NETWORK=dvportgroup-22
+  export MGMT_GATEWAY_CIDR=192.168.100.1/24 FLB_WORKLOAD_NW_GATEWAY_CIDR=192.168.101.1/24
+  export DNS_SERVER=192.168.100.1 DNS_SEARCHDOMAIN=env1.lab.test
+  export CP_MGMT_START=192.168.100.60 CP_MGMT_COUNT=5
+  export FLB_MANAGEMENT_STARTING_IP=192.168.100.70 FLB_MANAGEMENT_IP_COUNT=3
+  export FLB_NW_STARTING_IP=192.168.101.2 FLB_NW_IP_COUNT=10
+  export FLB_WORKLOAD_NW_STARTING_IP=192.168.101.100 FLB_WORKLOAD_IP_COUNT=50
+  export FLB_VIP_STARTING_IP=192.168.103.10 FLB_VIP_IP_COUNT=100
+  export K8S_SERVICE_SUBNET=10.96.0.0 K8S_SERVICE_SUBNET_COUNT=512
 }

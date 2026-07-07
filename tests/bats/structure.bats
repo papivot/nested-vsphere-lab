@@ -29,6 +29,28 @@ ROOT="${BATS_TEST_DIRNAME}/../.."
   [ -f "${ROOT}/stages/stage1-jumpbox/verify.sh" ]
 }
 
+@test "all stage-2 steps present" {
+  for s in 00-preflight 10-esxi 20-vcenter 30-cluster 40-supervisor 90-labinfo; do
+    [ -f "${ROOT}/stages/stage2-nested-vsphere/steps/${s}.sh" ]
+  done
+}
+
+@test "stage-2 rollbacks present for every mutating step" {
+  for s in 10-esxi 20-vcenter 30-cluster 40-supervisor; do
+    [ -f "${ROOT}/stages/stage2-nested-vsphere/rollback/${s}.sh" ]
+  done
+}
+
+@test "stage-2 dispatcher + verify + templates present" {
+  [ -f "${ROOT}/stages/stage2-nested-vsphere/stage.sh" ]
+  [ -f "${ROOT}/stages/stage2-nested-vsphere/verify.sh" ]
+  [ -f "${ROOT}/stages/stage2-nested-vsphere/templates/esxi.template.json" ]
+  [ -f "${ROOT}/stages/stage2-nested-vsphere/templates/vcsa.esxi.json.tmpl" ]
+  [ -f "${ROOT}/stages/stage2-nested-vsphere/templates/vcsa.vc.json.tmpl" ]
+  [ -f "${ROOT}/stages/stage2-nested-vsphere/templates/enable_flb.json.tmpl" ]
+  [ -f "${ROOT}/lib/govc.sh" ]
+}
+
 @test "example input is valid YAML (yq)" {
   if ! command -v yq >/dev/null 2>&1; then skip "yq not installed"; fi
   run yq '.network.vlans | length' "${ROOT}/input.example.yaml"

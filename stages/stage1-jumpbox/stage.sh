@@ -51,7 +51,9 @@ compute_derived() {
   CERTS_DIR=$(cfg '.certs.dir' '/etc/nested-lab/ca')
   CA_MODE=$(cfg '.certs.ca_mode' 'selfsigned')
   CA_BUNDLE="${CERTS_DIR}/ca-bundle.crt"
-  REGISTRY_FQDN=$(cfg '.registry.fqdn' "registry.${DOMAIN}")
+  # FQDN = <registry.name>.<jumpbox.domain>. An explicit registry.fqdn still
+  # wins (backward-compat / cross-domain), else it is built from the short name.
+  REGISTRY_FQDN=$(cfg '.registry.fqdn' "$(cfg '.registry.name' 'registry').${DOMAIN}")
   REGISTRY_IP=$(cfg '.registry.ip' '')
   REGISTRY_ADDR="${REGISTRY_IP:-$NATIVE_GW}"   # IP the registry is reached at / bound to
   REGISTRY_DATA=$(cfg '.registry.data_dir' '/data/registry')

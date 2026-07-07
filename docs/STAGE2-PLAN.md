@@ -1,7 +1,9 @@
 # Stage 2 — planning seed
 
-Status: **not started.** This is a starting frame for planning, not a final
-plan. Read `CLAUDE.md` first for repo conventions. Stage 2 must stay uniform
+Status: **implemented (rework in progress / needs field validation).** The
+sections below are the original planning frame; see **Implementation notes** at
+the bottom for what was actually built and the two open items. Read `CLAUDE.md`
+first for repo conventions. Stage 2 must stay uniform
 with Stage 1 (same `stages/stageN-*/` shape, `run.sh --stage 2`, idempotent
 steps with render/apply split + bats tests, single `input.yaml`, scoped
 rollback + `--verify`).
@@ -92,3 +94,50 @@ stage2:
    verify.sh) and extend `run.sh`/dispatch for `--stage 2`.
 4. Build step-by-step, each with a render/apply split + bats tests, exactly like
    Stage 1.
+
+## Implementation notes (what was built)
+
+Decisions locked with the user and implemented:
+
+- **Underlying:** standalone ESXi (`type: esxi`) or an existing vCenter
+  (`type: vcenter`, needs `underlying.datacenter` + `.cluster`). `govc_target`
+  and the VCSA template are selected by type. **LB:** vSphere **Foundation Load
+  Balancer** only (AVI/NSX deferred).
+- **Deploys use committed envsubst templates** (not dynamic `import.spec`):
+  `templates/esxi.template.json` for the nested ESXi (guestinfo also injected via
+  `vm.change -e` extraConfig — the mechanism that works on standalone ESXi), and
+  `templates/vcsa.esxi.json.tmpl` / `templates/vcsa.vc.json.tmpl` for vcsa-deploy.
+- **Storage:** vSAN mode is selectable via `stage2.cluster.vsan.mode`:
+  - **osa** (default; lighter, recommended for nested — ESA is memory-hungry):
+    one `vsan_cache` + one `vsan_capacity` disk of *distinct* sizes; enabled with
+    `govc cluster.change -vsan-enabled -ha-enabled` + per-host
+    `esxcli vsan storage add` (ported from `scratch/create-cluster.sh.osa`).
+    Disks are matched by size at claim time.
+  - **esa**: disk[0]=boot + pooled `vsan_data` disks (no cache, no SSD marking);
+    enabled via the vim25 REST `ReconfigureComputeResource_Task` with
+    `vsanEsaEnabled` + autoclaim (from `scratch/create-cluster.sh`).
+- **VCSA:** deployed with the supported **`vcsa-deploy` CLI** from the mounted
+  installer ISO (`stage2.vcsa.iso` under `artifacts.dir`), rendered from
+  `templates/vcsa.json.tmpl` via `envsubst`.
+- **vSAN / HA / ESA:** enabled via the validated **vim25 SOAP-REST**
+  `ReconfigureComputeResource_Task` + `wait_for_task` (in `lib/govc.sh`), NOT the
+  guessed `/api/vcenter/vsan/...` REST. Pure spec builders live in
+  `steps/30-cluster.sh` and are bats-tested.
+- **Supervisor:** enabled from `templates/enable_flb.json.tmpl` (ported from the
+  field-validated `scratch/enable_on_cc_flb.json`), all IP ranges driven from
+  `stage2.supervisor.ranges` in `input.yaml`.
+- Idempotency is live-state-driven (govc existence / REST config_status gates),
+  per-step rollbacks for all four mutating steps, `--verify` live suite.
+
+**Two open items to confirm on real hardware:**
+
+1. **WCP enable endpoint.** The payload is validated, but the enable action is
+   coded as `POST /api/vcenter/namespace-management/clusters/{moid}?action=enable_on_compute_cluster`
+   (inferred from the `enable_on_cc_flb` filename). Confirm the exact
+   action/endpoint for the target vCenter build and adjust `_enable_supervisor`
+   in `steps/40-supervisor.sh` if needed.
+2. **Jumpbox registry as the Supervisor image source.** The validated FLB
+   payload does not include an image registry, so the registry is left reachable
+   but not wired into the enable call. Wire it via the `workloads.images.registry`
+   section (see `scratch/cluster-payload.json`) once the endpoint above is
+   confirmed.

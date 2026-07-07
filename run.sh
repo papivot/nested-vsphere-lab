@@ -44,8 +44,11 @@ done
 
 export INPUT_FILE STAGE
 
-STAGE_DIR="stages/stage1-jumpbox"
-[[ "$STAGE" == "1" ]] || { echo "ERROR: only stage 1 is implemented." >&2; exit 2; }
+case "$STAGE" in
+  1) STAGE_DIR="stages/stage1-jumpbox" ;;
+  2) STAGE_DIR="stages/stage2-nested-vsphere" ;;
+  *) echo "ERROR: unknown stage '${STAGE}'. Valid: 1, 2." >&2; exit 2 ;;
+esac
 [[ -d "$STAGE_DIR" ]] || { echo "ERROR: stage dir '$STAGE_DIR' missing." >&2; exit 2; }
 [[ -f "$INPUT_FILE" ]] || { echo "ERROR: input '$INPUT_FILE' not found. Copy input.example.yaml and edit it." >&2; exit 2; }
 
@@ -74,10 +77,15 @@ log "Detected OS family: ${OS_FAMILY} (${OS_PRETTY})"
 require_yq
 load_secrets
 
-# shellcheck source=stages/stage1-jumpbox/stage.sh
+# Stage 2 needs the govc helpers.
+if [[ "$STAGE" == "2" ]]; then
+  # shellcheck source=lib/govc.sh
+  source lib/govc.sh
+fi
+
+# shellcheck disable=SC1090
 source "${STAGE_DIR}/stage.sh"
 compute_derived
-log "Model: ${N_VLANS} VLAN(s), supernet ${SUPERNET}, private NIC ${PRIVATE_NIC}, public NIC ${PUBLIC_NIC}, registry ${REGISTRY_FQDN} (${REGISTRY_ADDR})"
 
 case "$MODE" in
   run)
@@ -85,7 +93,7 @@ case "$MODE" in
     stage_run
     ;;
   verify)
-    # shellcheck source=stages/stage1-jumpbox/verify.sh
+    # shellcheck disable=SC1090
     source "${STAGE_DIR}/verify.sh"
     verify_main
     ;;

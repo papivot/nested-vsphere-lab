@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# ============================================================================
+# preflight :: hard validation gate for Stage 2. Read-only. Fails fast.
+# Validates Stage 1 health, underlying target, OVA presence, and sizing.
+# ============================================================================
+
+step_preflight() {
+  local fail=0
+  _pf() { err "PREFLIGHT: $*"; fail=1; }
+
+  # ---- govc available ----
+  require_govc
+
+  # ---- Secrets set ----
+  require_secret UNDERLYING_PASSWORD "underlying ESXi root password"
+  require_secret VCSA_SSO_PASSWORD   "nested vCenter SSO administrator password"
+  require_secret ESXI_ROOT_PASSWORD  "nested ESXi root password"
+  govc_target underlying
+
+  # ---- Stage 1 health: CA bundle exists ----
+  if [[ -f "$CA_BUNDLE" ]]; then
+    ok "Lab CA bundle present: ${CA_BUNDLE}"
+  else
+    _pf "Lab CA bundle missing: ${CA_BUNDLE}  (run Stage 1 first)"
+  fi
+
+  # ---- Stage 1 health: DNS resolves VCSA and nested ESXi names ----
+  local i
+  for ((i=0; i<N_NESXI; i++)); do
+    local resolved
+    resolved=$(dig @"${NATIVE_GW}" +short "${NESXI_FQDN[$i]}" 2>/dev/null || true)
+    if [[ "$resolved" == *"${NESXI_IP[$i]}"* ]]; then
+      ok "DNS: ${NESXI_FQDN[$i]} -> ${NESXI_IP[$i]}"
+    else
+      _pf "DNS: ${NESXI_FQDN[$i]} does not resolve to ${NESXI_IP[$i]} (got '${resolved}')"
+    fi
+  done
+  local vcsa_resolved
+  vcsa_resolved=$(dig @"${NATIVE_GW}" +short "${VCSA_FQDN}" 2>/dev/null || true)
+  if [[ "$vcsa_resolved" == *"${VCSA_IP}"* ]]; then
+    ok "DNS: ${VCSA_FQDN} -> ${VCSA_IP}"
+  else
+    _pf "DNS: ${VCSA_FQDN} does not resolve to ${VCSA_IP} (got '${vcsa_resolved}')"
+  fi
+
+  # ---- Stage 1 health: registry reachable ----
+  local reg_code
+  reg_code=$(curl -sk -o /dev/null -w '%{http_code}' \
+    --cacert "$CA_BUNDLE" "https://${REGISTRY_FQDN}/v2/" 2>/dev/null || true)
+  if [[ "$reg_code" == "200" || "$reg_code" == "401" ]]; then
+    ok "Registry ${REGISTRY_FQDN}/v2/ healthy (HTTP ${reg_code})"
+  else
+    _pf "Registry ${REGISTRY_FQDN}/v2/ unhealthy (HTTP ${reg_code})"
+  fi
+
+  # ---- Underlying ESXi: config sanity ----
+  [[ -n "$UNDERLYING_HOST" ]]      || _pf "stage2.underlying.host is not set in input.yaml"
+  [[ -n "$UNDERLYING_DATASTORE" ]] || _pf "stage2.underlying.datastore is not set in input.yaml"
+
+  # Skip live-target checks if the host isn't configured (govc would hang/fail).
+  if [[ -z "$UNDERLYING_HOST" ]]; then
+    die "stage2.underlying.host is required. Fix input.yaml and re-run."
+  fi
+
+  # ---- Underlying ESXi: connectivity via govc about ----
+  if govc about -k 2>/dev/null | grep -q 'Product name:'; then
+    local prod_line; prod_line=$(govc about -k 2>/dev/null | grep 'Product name:' || true)
+    ok "Underlying ESXi reachable: ${prod_line}"
+  else
+    _pf "Cannot reach underlying ESXi at ${UNDERLYING_HOST} (check host, credentials, network)"
+  fi
+
+  # ---- Underlying (vCenter only): datacenter + cluster exist ----
+  if [[ "$UNDERLYING_TYPE" == "vcenter" ]]; then
+    govc_object_exists "/${UNDERLYING_DATACENTER}" \
+      && ok "Datacenter '${UNDERLYING_DATACENTER}' found." \
+      || _pf "Datacenter '${UNDERLYING_DATACENTER}' not found on the underlying vCenter."
+    govc_object_exists "/${UNDERLYING_DATACENTER}/host/${UNDERLYING_CLUSTER}" \
+      && ok "Cluster '${UNDERLYING_CLUSTER}' found." \
+      || _pf "Cluster '${UNDERLYING_CLUSTER}' not found on the underlying vCenter."
+  fi
+
+  # ---- Underlying: datastore exists ----
+  if govc datastore.info -k "${UNDERLYING_DATASTORE}" &>/dev/null; then
+    ok "Datastore '${UNDERLYING_DATASTORE}' found on underlying target."
+  else
+    _pf "Datastore '${UNDERLYING_DATASTORE}' not found on underlying target."
+  fi
+
+  # ---- Underlying: trunk portgroup exists ----
+  # On standalone ESXi the trunk is a standard-switch portgroup; on a vCenter it
+  # is (typically) a distributed portgroup. Check the right inventory each way.
+  if [[ "$UNDERLYING_TYPE" == "vcenter" ]]; then
+    # A distributed portgroup is govc type 'g'; a standard/opaque network is 'n'.
+    if govc find -k / -type g -name "${UNDERLYING_PG}" 2>/dev/null | grep -q . \
+       || govc find -k / -type n -name "${UNDERLYING_PG}" 2>/dev/null | grep -q .; then
+      ok "Network '${UNDERLYING_PG}' found on the underlying vCenter."
+    else
+      _pf "Network '${UNDERLYING_PG}' not found on the underlying vCenter (need a VLAN-trunk portgroup)."
+    fi
+  else
+    if govc host.portgroup.info -k -json 2>/dev/null \
+        | jq -r '.hostPortGroup[].spec.name' 2>/dev/null \
+        | grep -qxF "${UNDERLYING_PG}"; then
+      ok "Portgroup '${UNDERLYING_PG}' found on underlying ESXi."
+    else
+      _pf "Portgroup '${UNDERLYING_PG}' not found on underlying ESXi. Create a VLAN trunk portgroup first."
+    fi
+  fi
+
+  # ---- Underlying ESXi: free disk space estimate ----
+  # Each nested ESXi VM ≈ boot + ESA data disks (thin); VCSA ≈ 150 GB thin.
+  local vcsa_gb total_gb
+  vcsa_gb=150
+  total_gb=$(( vcsa_gb + N_NESXI * ESXI_DISK_TOTAL_GB ))
+  local free_gb
+  free_gb=$(govc datastore.info -k -json "${UNDERLYING_DATASTORE}" 2>/dev/null \
+    | jq -r '.datastores[0].summary.freeSpace // 0' \
+    | awk '{printf "%d", $1/1073741824}' 2>/dev/null || echo 0)
+  if (( free_gb >= total_gb )); then
+    ok "Datastore free: ${free_gb} GB >= estimated ${total_gb} GB needed."
+  else
+    _pf "Datastore free: ${free_gb} GB < estimated ${total_gb} GB needed (${N_NESXI}x ESXi + VCSA thin)."
+  fi
+
+  # ---- Binaries present under artifacts.dir ----
+  if [[ -f "$ESXI_OVA" ]]; then
+    ok "Nested ESXi OVA found: ${ESXI_OVA}"
+  else
+    _pf "Nested ESXi OVA missing: ${ESXI_OVA}  (copy to artifacts.dir)"
+  fi
+  if [[ -f "$VCSA_ISO" ]]; then
+    ok "VCSA installer ISO found: ${VCSA_ISO}"
+  else
+    _pf "VCSA installer ISO missing: ${VCSA_ISO}  (copy to artifacts.dir)"
+  fi
+
+  # ---- Nested ESXi count sanity ----
+  if (( N_NESXI >= 3 )); then
+    ok "Nested ESXi count: ${N_NESXI} (>= 3, satisfies vSAN FTT=${VSAN_FTT})"
+  else
+    _pf "Only ${N_NESXI} nested ESXi entries in dns.records (prefix='${ESXI_DNS_PREFIX}'). Need >= 3 for vSAN."
+  fi
+
+  # ---- Required tools ----
+  # envsubst renders the vcsa-deploy + WCP JSON templates; mount attaches the
+  # VCSA ISO so vcsa-deploy is available.
+  local tool
+  for tool in jq dig curl envsubst mount; do
+    command -v "$tool" >/dev/null 2>&1 \
+      && ok "Tool '${tool}' available." \
+      || _pf "Tool '${tool}' not found."
+  done
+
+  (( fail == 0 )) || die "Preflight failed. Fix the issues above and re-run."
+  ok "All Stage 2 preflight checks passed."
+}

@@ -55,7 +55,29 @@ else
   fi
 fi
 
+# ---- govc (govmomi CLI) - required for Stage 2 ----
+if command -v govc >/dev/null 2>&1 && govc version 2>/dev/null | grep -qE 'govc [0-9]'; then
+  log "govc already present: $(govc version)"
+else
+  log "Installing govc static binary"
+  arch="$(uname -m)"
+  case "$arch" in
+    x86_64|amd64) govc_arch=x86_64 ;;
+    aarch64|arm64) govc_arch=arm64 ;;
+    *) echo "Unsupported arch for govc: $arch"; exit 1 ;;
+  esac
+  govc_url="https://github.com/vmware/govmomi/releases/latest/download/govc_Linux_${govc_arch}.tar.gz"
+  if curl -fsSL "$govc_url" | tar -xz -C /usr/local/bin govc; then
+    chmod +x /usr/local/bin/govc
+    log "govc installed: $(govc version)"
+  else
+    echo "ERROR: could not download govc from ${govc_url} (no internet?). Install govc manually." >&2
+    exit 1
+  fi
+fi
+
 log "Done. Next:"
 log "  cp input.example.yaml input.yaml && \$EDITOR input.yaml"
 log "  cp secrets.example.env secrets.env && \$EDITOR secrets.env   # chmod 600"
 log "  ./run.sh --stage 1"
+log "  ./run.sh --stage 2   # after Stage 1 is complete"
