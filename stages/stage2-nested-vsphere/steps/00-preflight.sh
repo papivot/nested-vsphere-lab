@@ -8,6 +8,27 @@ step_preflight() {
   local fail=0
   _pf() { err "PREFLIGHT: $*"; fail=1; }
 
+  # _dns_both <fqdn> <ip> — validate DNS resolves BOTH ways. Forward (A) and
+  # reverse (PTR) are both required: the nested ESXi are added to the cluster by
+  # FQDN and vSAN uses reverse DNS, and vcsa-deploy aborts without a matching PTR.
+  _dns_both() {
+    local fqdn="$1" ip="$2" fwd ptr
+    fwd=$(dig @"${NATIVE_GW}" +short "$fqdn" 2>/dev/null || true)
+    if [[ "$fwd" == *"$ip"* ]]; then
+      ok "DNS forward: ${fqdn} -> ${ip}"
+    else
+      _pf "DNS forward: ${fqdn} does not resolve to ${ip} (got '${fwd:-<none>}')"
+    fi
+    # PTR of <ip> must equal <fqdn> (trailing dot stripped; tolerate multiple
+    # PTR lines by matching the FQDN as a full line).
+    ptr=$(dig @"${NATIVE_GW}" +short -x "$ip" 2>/dev/null || true)
+    if printf '%s\n' "$ptr" | sed 's/\.$//' | grep -qxF "$fqdn"; then
+      ok "DNS reverse: ${ip} -> ${fqdn}"
+    else
+      _pf "DNS reverse: ${ip} PTR does not resolve to ${fqdn} (got '$(printf '%s' "$ptr" | tr '\n' ' ' | sed 's/ *$//')'). A matching PTR record is required."
+    fi
+  }
+
   # ---- govc available ----
   require_govc
 
@@ -24,24 +45,12 @@ step_preflight() {
     _pf "Lab CA bundle missing: ${CA_BUNDLE}  (run Stage 1 first)"
   fi
 
-  # ---- Stage 1 health: DNS resolves VCSA and nested ESXi names ----
+  # ---- Stage 1 health: DNS resolves VCSA + nested ESXi both ways (A + PTR) ----
   local i
   for ((i=0; i<N_NESXI; i++)); do
-    local resolved
-    resolved=$(dig @"${NATIVE_GW}" +short "${NESXI_FQDN[$i]}" 2>/dev/null || true)
-    if [[ "$resolved" == *"${NESXI_IP[$i]}"* ]]; then
-      ok "DNS: ${NESXI_FQDN[$i]} -> ${NESXI_IP[$i]}"
-    else
-      _pf "DNS: ${NESXI_FQDN[$i]} does not resolve to ${NESXI_IP[$i]} (got '${resolved}')"
-    fi
+    _dns_both "${NESXI_FQDN[$i]}" "${NESXI_IP[$i]}"
   done
-  local vcsa_resolved
-  vcsa_resolved=$(dig @"${NATIVE_GW}" +short "${VCSA_FQDN}" 2>/dev/null || true)
-  if [[ "$vcsa_resolved" == *"${VCSA_IP}"* ]]; then
-    ok "DNS: ${VCSA_FQDN} -> ${VCSA_IP}"
-  else
-    _pf "DNS: ${VCSA_FQDN} does not resolve to ${VCSA_IP} (got '${vcsa_resolved}')"
-  fi
+  _dns_both "${VCSA_FQDN}" "${VCSA_IP}"
 
   # ---- Stage 1 health: registry reachable ----
   local reg_code
