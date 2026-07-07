@@ -62,12 +62,17 @@ step_preflight() {
     die "stage2.underlying.host is required. Fix input.yaml and re-run."
   fi
 
-  # ---- Underlying ESXi: connectivity via govc about ----
-  if govc about -k 2>/dev/null | grep -q 'Product name:'; then
-    local prod_line; prod_line=$(govc about -k 2>/dev/null | grep 'Product name:' || true)
-    ok "Underlying ESXi reachable: ${prod_line}"
+  # ---- Underlying target: connectivity via govc about ----
+  # Gate on govc's exit code (it is 0 only on a successful connect + auth); use
+  # the JSON name for display. Do NOT grep the text output — the field labels
+  # vary by govc version (0.54 prints "Name:", not "Product name:").
+  local about_json
+  if about_json=$(govc about -k -json 2>/dev/null) && [[ -n "$about_json" ]]; then
+    local prod; prod=$(printf '%s' "$about_json" \
+      | jq -r '.about.fullName // .about.name // "connected"' 2>/dev/null || echo connected)
+    ok "Underlying ${UNDERLYING_TYPE} reachable at ${UNDERLYING_HOST}: ${prod}"
   else
-    _pf "Cannot reach underlying ESXi at ${UNDERLYING_HOST} (check host, credentials, network)"
+    _pf "Cannot reach underlying ${UNDERLYING_TYPE} at ${UNDERLYING_HOST} (check host, credentials, network)"
   fi
 
   # ---- Underlying (vCenter only): datacenter + cluster exist ----
