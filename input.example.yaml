@@ -100,14 +100,14 @@ stage2:
     host: 10.0.0.5               # ESXi IP/hostname, or the vCenter IP/hostname
     username: root               # root for esxi; administrator@vsphere.local for vcenter
     datastore: datastore1        # target datastore for nested VMs
-    portgroup_trunk: VM Network  # VLAN-trunk portgroup (std-switch PG on esxi; distributed PG on vcenter)
+    portgroup_trunk: mgmt-priv   # the VLAN-trunk portgroup that EXISTS ON YOUR HOST (std-switch PG on esxi; distributed PG on vcenter). VMs attach here.
     # Required only when type: vcenter — placement for the nested VMs + VCSA:
     datacenter: ""               # e.g. Datacenter
     cluster: ""                  # e.g. Cluster1
 
   esxi:
     ova: Nested_ESXi9.0_Appliance_Template.ova   # filename under artifacts.dir
-    ova_network: VM Network      # the OVF network label inside the OVA (mapped to portgroup_trunk)
+    ova_network: ""              # OVF network label INSIDE the OVA — leave blank to auto-detect (recommended). This is NOT your host portgroup (that's underlying.portgroup_trunk).
     dns_prefix: esxi             # matches esxi01/02/03 in dns.records; derives count + IPs + FQDNs
     cpu: 8
     mem_gb: 48

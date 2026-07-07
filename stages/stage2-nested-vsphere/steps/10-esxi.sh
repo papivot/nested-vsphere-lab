@@ -56,6 +56,18 @@ _deploy_esxi_vm() {
     return
   fi
 
+  # Resolve the OVA's internal network label (the NetworkMapping *Name*, which
+  # must match a network the OVA defines — e.g. "VM Network"). Auto-detected
+  # from the OVA (a stable field) unless overridden via stage2.esxi.ova_network.
+  # The target portgroup (NetworkMapping *Network*) is always UNDERLYING_PG.
+  if [[ -z "${ESXI_OVA_NETWORK:-}" ]]; then
+    ESXI_OVA_NETWORK=$(govc import.spec -k "${ESXI_OVA}" 2>/dev/null \
+      | jq -r '.NetworkMapping[0].Name // empty' 2>/dev/null || true)
+    [[ -n "$ESXI_OVA_NETWORK" ]] || ESXI_OVA_NETWORK="VM Network"
+  fi
+  export ESXI_OVA_NETWORK
+  log "Mapping OVA network '${ESXI_OVA_NETWORK}' -> portgroup '${UNDERLYING_PG}'"
+
   export ESXI_HOST_NAME="$name" ESXI_HOST_IP="$ip"
   local opts; opts=$(mktemp)
   _render_esxi_options >"$opts" || die "Failed to render ESXi import options for ${name}"

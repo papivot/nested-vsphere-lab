@@ -72,7 +72,7 @@ compute_derived() {
 
   # ---- Nested ESXi: derive list from dns.records matching dns_prefix ----
   ESXI_OVA="${ARTIFACTS_DIR}/$(cfg '.stage2.esxi.ova' 'nested-esxi9.ova')"
-  ESXI_OVA_NETWORK=$(cfg '.stage2.esxi.ova_network' 'VM Network')  # OVF network label
+  ESXI_OVA_NETWORK=$(cfg '.stage2.esxi.ova_network' '')  # OVF network label; blank = auto-detect from the OVA
   ESXI_DNS_PREFIX=$(cfg '.stage2.esxi.dns_prefix' 'esxi')
   ESXI_CPU=$(cfg '.stage2.esxi.cpu'    '8')
   ESXI_MEM=$(cfg '.stage2.esxi.mem_gb' '48')
