@@ -31,8 +31,19 @@ install_pkgs() {
   esac
 }
 
-log "Installing base utilities (jq, curl, openssl, ca-certificates, tar, gzip)"
-install_pkgs jq curl openssl ca-certificates tar gzip || true
+# envsubst (from gettext) renders the Stage 2 vcsa-deploy / nested-ESXi / WCP
+# JSON templates. Package name differs by family (gettext-base on Debian).
+case "$FAMILY" in
+  debian) GETTEXT_PKG=gettext-base ;;
+  *)      GETTEXT_PKG=gettext ;;
+esac
+
+log "Installing base utilities (jq, curl, openssl, ca-certificates, tar, gzip, ${GETTEXT_PKG})"
+install_pkgs jq curl openssl ca-certificates tar gzip "$GETTEXT_PKG" || true
+
+# envsubst is required by Stage 2 (dig is provided by Stage 1's bind packages;
+# mount/awk ship with the base OS). Warn early if envsubst is still missing.
+command -v envsubst >/dev/null 2>&1 || log "WARNING: envsubst not found after install; Stage 2 template rendering needs it (install '${GETTEXT_PKG}')."
 
 # ---- yq (mikefarah) ----
 if command -v yq >/dev/null 2>&1 && yq --version 2>/dev/null | grep -qiE 'mikefarah|version v?4'; then
