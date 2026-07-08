@@ -90,18 +90,20 @@ _run_vcsa_deploy() {
 _wait_vcsa_ready() {
   local base="https://${VCSA_IP}"
 
-  log "Waiting for VCSA appliance REST API (up to 30 min) ..."
-  local elapsed=0 max=1800 code
+  # Gate on the SOAP `about` call (the validated scratch/create-vcenter.sh
+  # signal). Do NOT poll /api/ REST with basic auth: those endpoints reject
+  # basic auth with HTTP 401 — a session token from POST /api/session is
+  # required first (see the inventory check below, which does that).
+  log "Waiting for the vCenter API to come up (up to 30 min) ..."
+  govc_target nested-vc
+  local elapsed=0 max=1800
   while (( elapsed < max )); do
-    code=$(curl -sk -o /dev/null -w '%{http_code}' \
-      -u "${VCSA_USER}:${VCSA_SSO_PASSWORD}" \
-      "${base}/api/appliance/system/version" 2>/dev/null || true)
-    [[ "$code" == "200" ]] && break
+    govc about -k >/dev/null 2>&1 && break
     sleep 30; (( elapsed += 30 )) || true
-    log "  VCSA appliance API not ready (HTTP ${code:-err}), ${elapsed}/${max}s ..."
+    log "  vCenter API not ready yet, ${elapsed}/${max}s ..."
   done
-  (( elapsed < max )) || die "Timed out waiting for VCSA appliance API at ${VCSA_IP}"
-  ok "VCSA appliance REST API is responding."
+  (( elapsed < max )) || die "Timed out waiting for the vCenter API at ${VCSA_IP}"
+  ok "vCenter SOAP API is responding."
 
   log "Waiting for vCenter inventory API (up to 10 min) ..."
   local e2=0 max2=600 tok dc_code

@@ -57,14 +57,20 @@ verify_main() {
   fi
 
   # ---- vCenter API responding ----
-  local vc_code
-  vc_code=$(curl -sk -o /dev/null -w '%{http_code}' \
-    "https://${VCSA_IP}/api/vcenter/datacenter" \
-    -u "${VCSA_USER}:${VCSA_SSO_PASSWORD}" 2>/dev/null || true)
-  case "$vc_code" in
-    200) _t_ok "vCenter REST API at ${VCSA_IP} healthy (HTTP 200)" ;;
-    *)   _t_fail "vCenter REST API at ${VCSA_IP} HTTP ${vc_code:-err}" ;;
-  esac
+  # /api/ endpoints reject HTTP basic auth (401); create a session token first.
+  local vc_tok vc_code
+  vc_tok=$(vc_session "${VCSA_IP}" "${VCSA_USER}" "${VCSA_SSO_PASSWORD}" 2>/dev/null || true)
+  if [[ -n "$vc_tok" ]]; then
+    vc_code=$(curl -sk -o /dev/null -w '%{http_code}' \
+      -H "vmware-api-session-id: ${vc_tok}" \
+      "https://${VCSA_IP}/api/vcenter/datacenter" 2>/dev/null || true)
+    case "$vc_code" in
+      200) _t_ok "vCenter REST API at ${VCSA_IP} healthy (HTTP 200)" ;;
+      *)   _t_fail "vCenter REST API at ${VCSA_IP} HTTP ${vc_code:-err}" ;;
+    esac
+  else
+    _t_fail "Could not create a vCenter session at ${VCSA_IP} (check SSO credentials)"
+  fi
 
   # ---- Nested cluster: hosts connected ----
   govc_target nested-vc
