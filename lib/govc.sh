@@ -22,9 +22,12 @@ govc_vm_exists() {
 # ---------------------------------------------------------------------------
 # govc_object_exists <inventory-path>
 # Returns 0 if the inventory path exists (datacenter, cluster, DVS, PG, etc.).
+# NB: `govc ls` exits 0 for a valid-but-missing path (empty glob), so it gives
+# false positives. `object.collect -s <path> name` errors when the managed
+# object does not exist, which is the reliable signal.
 # ---------------------------------------------------------------------------
 govc_object_exists() {
-  govc ls "$1" &>/dev/null
+  govc object.collect -k -s "$1" name >/dev/null 2>&1
 }
 
 # ---------------------------------------------------------------------------
