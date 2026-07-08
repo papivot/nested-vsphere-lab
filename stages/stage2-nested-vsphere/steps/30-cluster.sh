@@ -157,7 +157,11 @@ _create_vds_and_portgroups() {
 _add_hosts_to_vds() {
   local cluster_path="/${CLUSTER_DC}/host/${CLUSTER_NAME}" i
   for ((i=0; i<N_NESXI; i++)); do
-    local fqdn="${NESXI_FQDN[$i]}" host_path="/${CLUSTER_DC}/host/${CLUSTER_NAME}/${fqdn}"
+    # NB: separate declarations — a var cannot be referenced in the same `local`
+    # statement that first assigns it (all RHS are expanded before assignment;
+    # under `set -u` that is an unbound-variable error).
+    local fqdn="${NESXI_FQDN[$i]}"
+    local host_path="/${CLUSTER_DC}/host/${CLUSTER_NAME}/${fqdn}"
 
     log "Adding host '${fqdn}' to VDS '${VDS_NAME}' (pnic ${VDS_UPLINK_PNIC}) ..."
     # dvs.add is idempotent on re-add; tolerate the "already added" error.
