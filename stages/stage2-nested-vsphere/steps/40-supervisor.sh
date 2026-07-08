@@ -84,15 +84,19 @@ _create_content_library() {
   [[ -n "$ds_id" ]] || die "Datastore '${VSAN_DS}' not found via vCenter API"
 
   log "Creating content library '${CONTENT_LIB}' ..."
+  # vSphere 8/9: create a LOCAL library via POST /api/content/local-library.
+  # (POST /api/content/library returns 404 — that path only lists/gets; there is
+  # no create handler there.) The body is the LibraryModel directly (no
+  # create_spec wrapper — that is the older /rest/ shape); client_token is a
+  # query parameter.
   local body
   body=$(jq -n --arg name "${CONTENT_LIB}" --arg ds "${ds_id}" \
-    '{ create_spec: {
-         name: $name, type: "LOCAL",
-         storage_backings: [ { type: "DATASTORE", datastore_id: $ds } ],
-         description: "Nested lab content library"
-       },
-       client_token: "nested-lab-lib-create" }')
-  vc_api POST "${VCSA_IP}" "${_WCP_TOK}" "/api/content/library" -d "$body" >/dev/null \
+    '{ name: $name, type: "LOCAL",
+       storage_backings: [ { type: "DATASTORE", datastore_id: $ds } ],
+       description: "Nested lab content library" }')
+  vc_api POST "${VCSA_IP}" "${_WCP_TOK}" \
+    "/api/content/local-library?client_token=nested-lab-lib" \
+    -d "$body" >/dev/null \
     || die "Failed to create content library '${CONTENT_LIB}'"
   ok "Content library '${CONTENT_LIB}' created."
 }

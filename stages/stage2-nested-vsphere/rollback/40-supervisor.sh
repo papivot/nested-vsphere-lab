@@ -36,8 +36,10 @@ rollback_supervisor() {
       | jq -r '.name // empty' 2>/dev/null || true)
     if [[ "$name" == "${CONTENT_LIB}" ]]; then
       log "Removing content library '${CONTENT_LIB}' (${id}) ..."
+      # Delete is per-type: DELETE /api/content/local-library/{id} (the generic
+      # /api/content/library/{id} only supports GET).
       curl -sk -X DELETE -H "vmware-api-session-id: ${tok}" \
-        "https://${VCSA_IP}/api/content/library/${id}" >/dev/null 2>&1 \
+        "https://${VCSA_IP}/api/content/local-library/${id}" >/dev/null 2>&1 \
         && ok "Content library removed." || warn "Could not remove content library."
       break
     fi
