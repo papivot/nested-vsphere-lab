@@ -85,17 +85,17 @@ _create_content_library() {
 
   log "Creating content library '${CONTENT_LIB}' ..."
   # vSphere 8/9: create a LOCAL library via POST /api/content/local-library.
-  # (POST /api/content/library returns 404 — that path only lists/gets; there is
-  # no create handler there.) The body is the LibraryModel directly (no
-  # create_spec wrapper — that is the older /rest/ shape); client_token is a
-  # query parameter.
+  # (POST /api/content/library returns 404 — that path only lists/gets.) The
+  # body is the LibraryModel directly (no create_spec wrapper — that is the
+  # older /rest/ shape). No client_token: vSphere 9 rejects it as an unsupported
+  # property on this endpoint.
   local body
   body=$(jq -n --arg name "${CONTENT_LIB}" --arg ds "${ds_id}" \
     '{ name: $name, type: "LOCAL",
        storage_backings: [ { type: "DATASTORE", datastore_id: $ds } ],
        description: "Nested lab content library" }')
   vc_api POST "${VCSA_IP}" "${_WCP_TOK}" \
-    "/api/content/local-library?client_token=nested-lab-lib" \
+    "/api/content/local-library" \
     -d "$body" >/dev/null \
     || die "Failed to create content library '${CONTENT_LIB}'"
   ok "Content library '${CONTENT_LIB}' created."
