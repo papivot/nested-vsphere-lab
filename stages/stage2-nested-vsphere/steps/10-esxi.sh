@@ -21,15 +21,23 @@ step_esxi() {
   govc_target underlying
 
   local i
+  # Phase 1: deploy + attach disks + power on EVERY host first, so first-boot
+  # happens concurrently across all nested ESXi.
   for ((i=0; i<N_NESXI; i++)); do
     local name="${NESXI_NAME[$i]}" ip="${NESXI_IP[$i]}"
     log "--- Nested ESXi ${name} (${ip}) ---"
     _deploy_esxi_vm "$name" "$ip"
     _add_esa_disks  "$name"
     _ensure_esxi_powered_on "$name"
-    _wait_esxi_api  "$ip"
-    ok "Nested ESXi ${name} deployed and API-responsive."
   done
+
+  # Phase 2: wait for each management API. Because all hosts are already
+  # powered on, these waits overlap — total time is ~one boot, not the sum.
+  for ((i=0; i<N_NESXI; i++)); do
+    _wait_esxi_api "${NESXI_IP[$i]}"
+    ok "Nested ESXi ${NESXI_NAME[$i]} (${NESXI_IP[$i]}) API-responsive."
+  done
+  ok "All ${N_NESXI} nested ESXi deployed and API-responsive."
 }
 
 # ---------------------------------------------------------------------------
