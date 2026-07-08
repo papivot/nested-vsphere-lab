@@ -174,9 +174,16 @@ _add_hosts_to_vds() {
     govc host.vnic.service -k -host "${fqdn}" -enable vsan    vmk0 2>/dev/null || true
     govc host.vnic.service -k -host "${fqdn}" -enable vmotion vmk0 2>/dev/null || true
 
-    log "Setting NTP + exiting maintenance mode on ${fqdn} ..."
+    log "Setting NTP on ${fqdn} ..."
     govc host.esxcli -k -host "${fqdn}" system ntp set -e true -s "${NTP_SERVER}" 2>/dev/null || true
-    govc host.maintenance.exit -k "${fqdn}" 2>/dev/null || true
+
+    # Only exit maintenance mode if the host is actually in it — a freshly added
+    # host is connected (not in maintenance), and host.maintenance.exit then
+    # errors "operation not allowed in current state".
+    if [[ "$(govc object.collect -k -s "${host_path}" runtime.inMaintenanceMode 2>/dev/null || echo false)" == "true" ]]; then
+      log "Exiting maintenance mode on ${fqdn} ..."
+      govc host.maintenance.exit -k "${fqdn}" >/dev/null 2>&1 || warn "Could not exit maintenance mode on ${fqdn}."
+    fi
   done
 }
 

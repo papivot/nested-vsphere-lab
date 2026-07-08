@@ -27,7 +27,7 @@ step_esxi() {
     local name="${NESXI_NAME[$i]}" ip="${NESXI_IP[$i]}"
     log "--- Nested ESXi ${name} (${ip}) ---"
     _deploy_esxi_vm "$name" "$ip"
-    _add_esa_disks  "$name"
+    _prepare_data_disks "$name"
     _ensure_esxi_powered_on "$name"
   done
 
@@ -113,29 +113,53 @@ _deploy_esxi_vm() {
 # Attach the data disks BEFORE first power-on. Idempotent: expected disk count
 # = 1 boot + N data disks.
 # ---------------------------------------------------------------------------
-_add_esa_disks() {
+_prepare_data_disks() {
   local name="$1"
-  local want=$(( 1 + ${#ESXI_DATA_DISK_GB[@]} ))
-  local have
-  have=$(govc device.info -k -vm "$name" -json 'disk-*' 2>/dev/null \
-    | jq '.devices | length' 2>/dev/null || echo 0)
+  local ndata=${#ESXI_DATA_DISK_GB[@]}
+  (( ndata > 0 )) || return 0
 
-  if (( have >= want )); then
-    ok "VM '${name}' already has ${have} disk(s) (want ${want}), skipping."
-    return
-  fi
+  # The Nested ESXi OVA ships a boot disk (unit 0) + placeholder data disks.
+  # RESIZE the placeholders to the configured sizes (grow-only — govc refuses to
+  # shrink, so the boot disk can never be clobbered) rather than adding new
+  # disks, matching scratch/create-esxi.sh. Read existing disks sorted by
+  # unitNumber and emit "<key> <sizeGB>"; unit 0 is boot, the rest are data.
+  local -a dkey dgb
+  local k g
+  while read -r k g; do
+    [[ -n "$k" ]] || continue
+    dkey+=("$k"); dgb+=("$g")
+  done < <(govc device.info -k -vm "$name" -json 'disk-*' 2>/dev/null \
+    | jq -r '.devices | sort_by(.unitNumber) | .[]
+             | "\(.key) \((((.capacityInBytes // (.capacityInKB * 1024))) / 1073741824) | floor)"' \
+    2>/dev/null)
 
-  local i n=1
-  for ((i=0; i<${#ESXI_DATA_DISK_GB[@]}; i++)); do
-    log "Adding vSAN data disk ${n} (${ESXI_DATA_DISK_GB[$i]}G) to ${name} ..."
-    govc vm.disk.create -k \
-      -vm   "$name" \
-      -name "${name}/${name}-vsan-${n}" \
-      -size "${ESXI_DATA_DISK_GB[$i]}G" \
-      || die "Failed to add vSAN data disk ${n} to ${name}"
-    (( n++ )) || true
+  local have=${#dkey[@]}
+  (( have >= 1 )) || die "No disks found on ${name} (OVA import problem?)"
+  local existing_data=$(( have - 1 ))   # exclude the boot disk (unit 0)
+
+  local j
+  for ((j=0; j<ndata; j++)); do
+    local target="${ESXI_DATA_DISK_GB[$j]}"
+    if (( j < existing_data )); then
+      local key="${dkey[$((j+1))]}" cur="${dgb[$((j+1))]}"
+      if (( cur < target )); then
+        log "Resizing ${name} data disk (key ${key}) ${cur}G -> ${target}G ..."
+        govc vm.disk.change -k -vm "$name" -disk.key "$key" -size "${target}G" \
+          || die "vm.disk.change failed on ${name} (disk key ${key})"
+      elif (( cur == target )); then
+        ok "${name} data disk (key ${key}) already ${target}G."
+      else
+        warn "${name} data disk (key ${key}) is ${cur}G > target ${target}G; cannot shrink, leaving as-is."
+      fi
+    else
+      # Config wants more data disks than the OVA ships — create the extras.
+      log "Adding ${name} data disk ${target}G ..."
+      govc vm.disk.create -k -vm "$name" \
+        -name "${name}/${name}-vsan-$((j+1))" -size "${target}G" \
+        || die "vm.disk.create failed on ${name}"
+    fi
   done
-  ok "vSAN data disks added to ${name}."
+  ok "vSAN data disks sized on ${name}."
 }
 
 # ---------------------------------------------------------------------------
