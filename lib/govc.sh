@@ -40,17 +40,6 @@ govc_vm_power_state() {
 }
 
 # ---------------------------------------------------------------------------
-# govc_host_thumbprint <host-ip>
-# Fetches the SHA-1 thumbprint of an ESXi host's TLS cert without verifying it.
-# Used by cluster.add -thumbprint.
-# ---------------------------------------------------------------------------
-govc_host_thumbprint() {
-  local host="$1"
-  GOVC_URL="https://${host}/sdk" govc about.cert -k -thumbprint 2>/dev/null \
-    | awk '{print $2}'
-}
-
-# ---------------------------------------------------------------------------
 # wait_https <url> [max_seconds]
 # Polls until a 2xx HTTP response or timeout (default 1800s / 30 min).
 # ---------------------------------------------------------------------------

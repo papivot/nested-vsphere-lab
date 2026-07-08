@@ -89,21 +89,22 @@ _create_dc_and_cluster() {
 _add_hosts_to_cluster() {
   local cluster_path="/${CLUSTER_DC}/host/${CLUSTER_NAME}" i
   for ((i=0; i<N_NESXI; i++)); do
-    local fqdn="${NESXI_FQDN[$i]}" ip="${NESXI_IP[$i]}"
+    local fqdn="${NESXI_FQDN[$i]}"
     if govc find "${cluster_path}" -type h -name "${fqdn}" 2>/dev/null | grep -q .; then
       ok "Host '${fqdn}' already in cluster."
       continue
     fi
-    log "Fetching thumbprint for nested ESXi ${ip} ..."
-    local thumb; thumb=$(govc_host_thumbprint "$ip") \
-      || die "Could not fetch thumbprint for ${ip}"
     log "Adding host '${fqdn}' to cluster ..."
+    # -noverify accepts the nested ESXi self-signed cert without a thumbprint
+    # (matches scratch/create-cluster.sh). Do NOT pass -thumbprint from
+    # `about.cert -thumbprint`: govc now emits a SHA-256 thumbprint, but
+    # spec.sslThumbprint expects SHA-1, so vCenter rejects it.
     govc cluster.add -k \
-      -cluster    "${cluster_path}" \
-      -hostname   "${fqdn}" \
-      -username   "root" \
-      -password   "${ESXI_ROOT_PASSWORD}" \
-      -thumbprint "${thumb}" \
+      -cluster  "${cluster_path}" \
+      -hostname "${fqdn}" \
+      -username "root" \
+      -password "${ESXI_ROOT_PASSWORD}" \
+      -noverify -force \
       || die "cluster.add failed for ${fqdn}"
     ok "Host '${fqdn}' added to cluster."
   done
