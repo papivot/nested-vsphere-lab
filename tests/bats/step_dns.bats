@@ -45,3 +45,13 @@ setup() {
   [[ "$output" == *'zone "env1.lab.test"'* ]]
   [[ "$output" == *'zone "101.168.192.in-addr.arpa"'* ]]
 }
+
+@test "resolved drop-in routes lab domain + reverse zones to BIND" {
+  run _resolved_dropin
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"DNS=192.168.100.1"* ]]
+  [[ "$output" == *"Domains=env1.lab.test "* ]]
+  [[ "$output" == *"~100.168.192.in-addr.arpa"* ]]
+  [[ "$output" == *"~101.168.192.in-addr.arpa"* ]]
+  [[ "$output" == *"~102.168.192.in-addr.arpa"* ]]
+}

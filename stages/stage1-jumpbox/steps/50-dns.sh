@@ -49,7 +49,53 @@ step_dns() {
 
   svc_enable_now "$BIND_SERVICE"
   (( changed )) && svc_restart "$BIND_SERVICE"
+
+  # Point the jumpbox's own resolver at BIND for lab names.
+  _configure_jumpbox_resolver
+
   ok "BIND active: forward '${DOMAIN}' + ${N_VLANS} reverse zone(s)."
+}
+
+# _resolved_dropin (PURE) — systemd-resolved drop-in that routes the lab domain
+# (as search + route) and each reverse zone to the local BIND, while leaving
+# external DNS on the existing upstream link. Testable in isolation.
+_resolved_dropin() {
+  local i doms="${DOMAIN}"
+  for ((i=0; i<N_VLANS; i++)); do doms="${doms} ~${V_REVZONE[i]}"; done
+  cat <<EOF
+# Managed by nested-vsphere-lab (dns): resolve lab names via the local BIND.
+[Resolve]
+DNS=${NATIVE_GW}
+Domains=${doms}
+EOF
+}
+
+# Repoint the jumpbox's own resolver at BIND so tools ON the jumpbox — and SSH
+# -D SOCKS remote DNS — resolve *.${DOMAIN} and the reverse zones. Without this,
+# systemd-resolved sends lab queries to the upstream (which has no lab records),
+# so `getent hosts vcsa.<domain>` (the path sshd uses) fails even though BIND is
+# healthy. Opt out with dns.use_local_resolver: false.
+_configure_jumpbox_resolver() {
+  [[ "$(cfg_bool '.dns.use_local_resolver' 'true')" == "true" ]] || {
+    log "dns.use_local_resolver=false; leaving the jumpbox resolver unchanged."
+    return
+  }
+
+  if svc_is_active systemd-resolved 2>/dev/null; then
+    mkdir -p /etc/systemd/resolved.conf.d
+    write_file /etc/systemd/resolved.conf.d/nested-lab.conf 0644 < <(_resolved_dropin)
+    [[ "$FILE_CHANGED" == yes ]] && svc_restart systemd-resolved
+    command -v resolvectl >/dev/null 2>&1 && resolvectl flush-caches 2>/dev/null || true
+    ok "Jumpbox resolver: lab names -> BIND (${NATIVE_GW}) via systemd-resolved."
+  elif [[ ! -L /etc/resolv.conf ]]; then
+    # Classic /etc/resolv.conf: make BIND the primary resolver + search domain.
+    ensure_line /etc/resolv.conf "search ${DOMAIN}"
+    grep -qxF "nameserver ${NATIVE_GW}" /etc/resolv.conf \
+      || sed -i "1i nameserver ${NATIVE_GW}" /etc/resolv.conf
+    ok "Jumpbox resolver: BIND (${NATIVE_GW}) via /etc/resolv.conf."
+  else
+    warn "Skipped jumpbox resolver repoint: /etc/resolv.conf is a managed symlink and systemd-resolved is not active. If this host uses NetworkManager, run: nmcli con mod <mgmt-con> ipv4.dns ${NATIVE_GW} ipv4.dns-search ${DOMAIN} && nmcli con up <mgmt-con>"
+  fi
 }
 
 _dns_forward() {

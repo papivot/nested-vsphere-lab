@@ -29,6 +29,7 @@ ntp:
     - 10.0.0.10                # reachable from nested nodes via the jumpbox NAT
 
 dns:
+  use_local_resolver: true     # point the jumpbox's OWN resolver at BIND for lab names + reverse zones (needed for SSH -D SOCKS remote DNS and on-box lookups). false = leave the resolver untouched.
   forwarders:
     - 8.8.8.8
     - 1.1.1.1
