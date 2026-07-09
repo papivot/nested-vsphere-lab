@@ -168,7 +168,7 @@ compute_derived() {
   SUPER_CP_SIZE=$(cfg '.stage2.supervisor.control_plane_size' 'tiny')
   SUPERVISOR_SIZE=$(_upper "$SUPER_CP_SIZE")
   SUPERVISOR_VM_COUNT=$(cfg '.stage2.supervisor.control_plane_count' '1')
-  CONTENT_LIB=$(cfg '.stage2.supervisor.content_library'   'tkg-content-library')
+  CONTENT_LIB=$(cfg '.stage2.supervisor.content_library'   'vks-content-library')
   # Subscribed TKr library URL. Non-empty => SUBSCRIBED library; empty => LOCAL.
   CONTENT_LIB_URL=$(cfg '.stage2.supervisor.content_library_url' 'https://wp-content.broadcom.com/v2/latest/lib.json')
   CONTENT_LIB_ON_DEMAND=$(cfg_bool '.stage2.supervisor.content_library_on_demand' 'true')
