@@ -156,10 +156,12 @@ _enable_supervisor() {
   jq empty "$body" 2>/dev/null || die "Rendered WCP payload is not valid JSON"
 
   log "Enabling Supervisor on '${CLUSTER_NAME}' (this takes 15-30 min) ..."
-  # "enable_on_compute_cluster" is the vSphere 9.x Foundation-LB enable action
-  # (matches scratch/enable_on_cc_flb.json: enable_on_[c]ompute_[c]luster + flb).
+  # vSphere 9.x: POST the enable spec to the SUPERVISORS collection keyed by the
+  # cluster MOID with ?action=enable_on_compute_cluster (per the Automation API
+  # and papivot/bash-wcpcli9). NB: not .../clusters/{moid} — that path is for
+  # status/disable only.
   vc_api POST "${VCSA_IP}" "${_WCP_TOK}" \
-    "/api/vcenter/namespace-management/clusters/${moid}?action=enable_on_compute_cluster" \
+    "/api/vcenter/namespace-management/supervisors/${moid}?action=enable_on_compute_cluster" \
     -d "@${body}" >/dev/null \
     || die "Supervisor enable request failed. Check https://${VCSA_IP}/ui/"
   rm -f "$body"
