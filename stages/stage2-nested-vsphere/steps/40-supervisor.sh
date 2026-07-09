@@ -62,8 +62,19 @@ _render_wcp_payload() {
     < "$(_wcp_template)"
 }
 
+# _url_ssl_thumbprint <https-url>  -> SHA-1 thumbprint (AA:BB:..) of the host's
+# TLS cert, for content-library subscription over HTTPS. Uses openssl on the
+# jumpbox (which has egress). Empty on failure.
+_url_ssl_thumbprint() {
+  local url="$1" host port
+  host=$(printf '%s' "$url" | sed -E 's#^[a-z]+://##; s#/.*$##; s#:[0-9]+$##')
+  port=$(printf '%s' "$url" | sed -nE 's#^[a-z]+://[^/:]+:([0-9]+).*#\1#p'); port="${port:-443}"
+  echo | openssl s_client -connect "${host}:${port}" -servername "${host}" 2>/dev/null \
+    | openssl x509 -noout -fingerprint -sha1 2>/dev/null | sed 's/^.*=//'
+}
+
 # ---------------------------------------------------------------------------
-# LOCAL content library on the vSAN datastore (for TKr/OVA imports).
+# Content library: SUBSCRIBED (TKr) when content_library_url is set, else LOCAL.
 # ---------------------------------------------------------------------------
 _create_content_library() {
   local libs; libs=$(vc_api GET "${VCSA_IP}" "${_WCP_TOK}" "/api/content/library" 2>/dev/null || echo '[]')
@@ -89,17 +100,26 @@ _create_content_library() {
   local body
   if [[ -n "${CONTENT_LIB_URL}" ]]; then
     log "Creating SUBSCRIBED content library '${CONTENT_LIB}' (${CONTENT_LIB_URL}, on_demand=${CONTENT_LIB_ON_DEMAND}) ..."
+    # HTTPS subscription URLs need the server's SSL thumbprint (per the API:
+    # "ssl_thumbprint required for HTTPS subscription URLs"). Fetch it from the
+    # jumpbox (which has egress); include it only if we got one.
+    local sslthumb=""
+    case "${CONTENT_LIB_URL}" in
+      https://*) sslthumb=$(_url_ssl_thumbprint "${CONTENT_LIB_URL}") ;;
+    esac
+    [[ -n "$sslthumb" ]] && log "  subscription SSL thumbprint: ${sslthumb}"
     body=$(jq -n \
       --arg name "${CONTENT_LIB}" --arg ds "${ds_id}" --arg url "${CONTENT_LIB_URL}" \
-      --argjson ondemand "${CONTENT_LIB_ON_DEMAND}" \
+      --argjson ondemand "${CONTENT_LIB_ON_DEMAND}" --arg thumb "${sslthumb}" \
       '{ name: $name, type: "SUBSCRIBED",
          storage_backings: [ { type: "DATASTORE", datastore_id: $ds } ],
-         subscription_info: {
-           authentication_method: "NONE",
-           automatic_sync_enabled: false,
-           on_demand: $ondemand,
-           subscription_url: $url
-         } }')
+         subscription_info: (
+           { authentication_method: "NONE",
+             automatic_sync_enabled: false,
+             on_demand: $ondemand,
+             subscription_url: $url }
+           + (if $thumb != "" then { ssl_thumbprint: $thumb } else {} end)
+         ) }')
     vc_api POST "${VCSA_IP}" "${_WCP_TOK}" "/api/content/subscribed-library" \
       -d "$body" >/dev/null \
       || die "Failed to create subscribed content library '${CONTENT_LIB}'"
