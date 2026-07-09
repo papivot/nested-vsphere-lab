@@ -128,6 +128,14 @@ step_preflight() {
     _pf "Datastore free: ${free_gb} GB < estimated ${total_gb} GB needed (${N_NESXI}x ESXi + VCSA thin)."
   fi
 
+  # ---- Supervisor VIP range must sit inside the workload/frontend subnet ----
+  # The Foundation LB rejects VIP ranges outside the FRONTEND interface subnet.
+  if ip_in_cidr "${FLB_VIP_STARTING_IP}" "${SUPER_WKLD_CIDR}"; then
+    ok "Supervisor VIP range starts in the workload subnet (${SUPER_WKLD_CIDR})."
+  else
+    _pf "Supervisor VIP start ${FLB_VIP_STARTING_IP} is not within the workload network ${SUPER_WKLD_CIDR}. The Foundation LB requires VIPs inside the FRONTEND subnet — move stage2.supervisor.ranges.vip into ${SUPER_WKLD_CIDR}."
+  fi
+
   # ---- Binaries present under artifacts.dir ----
   if [[ -f "$ESXI_OVA" ]]; then
     ok "Nested ESXi OVA found: ${ESXI_OVA}"

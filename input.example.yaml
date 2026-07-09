@@ -52,8 +52,7 @@ proxy:                         # optional; leave blank if no upstream proxy
 
 routing:
   nat: true
-  static_routes:
-    - { dest: 192.168.103.0/24, via: 192.168.101.2 }   # e.g. Supervisor LB VIP range
+  static_routes: []              # not needed for the default (Supervisor VIPs live on the workload subnet). Add routes here only if you route a separate VIP/service subnet.
   bgp:
     enabled: false
     local_asn: 65010
@@ -160,8 +159,11 @@ stage2:
     # avoid the ESXi/VCSA static IPs. The VIP range must be routed to the
     # workload network (see routing.static_routes above).
     ranges:
-      control_plane: { start: 192.168.100.60,  count: 5 }    # CP node mgmt IPs (mgmt net)
-      flb_management: { start: 192.168.100.70,  count: 3 }    # FLB mgmt-persona IPs (mgmt net)
-      flb_frontend:   { start: 192.168.101.2,   count: 10 }   # FLB frontend IPs (workload net)
-      workload_node:  { start: 192.168.101.100, count: 50 }   # workload node IPs (workload net)
-      vip:            { start: 192.168.103.10,  count: 100 }  # LB VIPs (routed range)
+      control_plane: { start: 192.168.100.60,  count: 5 }    # CP node mgmt IPs (mgmt net 100)
+      flb_management: { start: 192.168.100.70,  count: 3 }    # FLB mgmt-persona IPs (mgmt net 100)
+      flb_frontend:   { start: 192.168.101.2,   count: 8 }    # FLB frontend IPs (workload net 101)
+      workload_node:  { start: 192.168.101.32,  count: 32 }   # workload node IPs (workload net 101)
+      # The Foundation LB requires the VIP range to sit INSIDE the frontend/
+      # workload subnet (here 192.168.101.0/24) — not a separate routed subnet.
+      # Keep it clear of the ranges above and the DHCP pool (.193-.254).
+      vip:            { start: 192.168.101.128, count: 32 }   # LB VIPs (within workload net 101)
