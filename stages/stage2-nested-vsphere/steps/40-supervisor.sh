@@ -151,6 +151,16 @@ _enable_supervisor() {
     ERROR)       die "Supervisor is in ERROR on '${CLUSTER_NAME}'. Check https://${VCSA_IP}/ui/" ;;
   esac
 
+  # WCP references the storage policy by its SPBM ID, not its display name —
+  # resolve name -> id and feed the id to the payload (VKS_STORAGE_POLICY).
+  local policy_id
+  policy_id=$(vc_api GET "${VCSA_IP}" "${_WCP_TOK}" "/api/vcenter/storage/policies" \
+    | jq -r --arg n "${STORAGE_POLICY}" '.[] | select(.name == $n) | .policy' | head -1)
+  [[ -n "$policy_id" ]] \
+    || die "Storage policy '${STORAGE_POLICY}' not found via vCenter API (create it in the cluster step)"
+  export VKS_STORAGE_POLICY="$policy_id"
+  log "Storage policy '${STORAGE_POLICY}' -> ${policy_id}"
+
   local body; body=$(mktemp)
   _render_wcp_payload >"$body" || die "Failed to render WCP enable payload"
   jq empty "$body" 2>/dev/null || die "Rendered WCP payload is not valid JSON"
