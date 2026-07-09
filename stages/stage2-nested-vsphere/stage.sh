@@ -168,7 +168,10 @@ compute_derived() {
   SUPER_CP_SIZE=$(cfg '.stage2.supervisor.control_plane_size' 'tiny')
   SUPERVISOR_SIZE=$(_upper "$SUPER_CP_SIZE")
   SUPERVISOR_VM_COUNT=$(cfg '.stage2.supervisor.control_plane_count' '1')
-  CONTENT_LIB=$(cfg '.stage2.supervisor.content_library'   'nested-lab-lib')
+  CONTENT_LIB=$(cfg '.stage2.supervisor.content_library'   'tkg-content-library')
+  # Subscribed TKr library URL. Non-empty => SUBSCRIBED library; empty => LOCAL.
+  CONTENT_LIB_URL=$(cfg '.stage2.supervisor.content_library_url' 'https://wp-content.broadcom.com/v2/latest/lib.json')
+  CONTENT_LIB_ON_DEMAND=$(cfg_bool '.stage2.supervisor.content_library_on_demand' 'true')
   STORAGE_POLICY=$(cfg '.stage2.supervisor.storage_policy' 'vsan-default')
   VKS_STORAGE_POLICY="$STORAGE_POLICY"
 
@@ -249,7 +252,7 @@ compute_derived() {
   export SUPER_WKLD_NET SUPER_WKLD_VLAN_ID SUPER_WKLD_CIDR
   export MGMT_PG_NAME WKLD_PG_NAME
   export SUPERVISOR_NAME SUPER_CP_SIZE SUPERVISOR_SIZE SUPERVISOR_VM_COUNT
-  export CONTENT_LIB STORAGE_POLICY VKS_STORAGE_POLICY
+  export CONTENT_LIB CONTENT_LIB_URL CONTENT_LIB_ON_DEMAND STORAGE_POLICY VKS_STORAGE_POLICY
   export MGMT_GATEWAY_CIDR FLB_WORKLOAD_NW_GATEWAY_CIDR DNS_SERVER DNS_SEARCHDOMAIN NTP_SERVER
   export K8S_SERVICE_SUBNET K8S_SERVICE_SUBNET_COUNT
   export CP_MGMT_START CP_MGMT_COUNT

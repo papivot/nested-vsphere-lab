@@ -83,21 +83,36 @@ _create_content_library() {
     || die "Could not find datastore '${VSAN_DS}' for content library"
   [[ -n "$ds_id" ]] || die "Datastore '${VSAN_DS}' not found via vCenter API"
 
-  log "Creating content library '${CONTENT_LIB}' ..."
-  # vSphere 8/9: create a LOCAL library via POST /api/content/local-library.
-  # (POST /api/content/library returns 404 — that path only lists/gets.) The
-  # body is the LibraryModel directly (no create_spec wrapper — that is the
-  # older /rest/ shape). No client_token: vSphere 9 rejects it as an unsupported
-  # property on this endpoint.
+  # vSphere 8/9: the body is the LibraryModel directly (no create_spec wrapper —
+  # that is the older /rest/ shape) and no client_token (vSphere 9 rejects it as
+  # an unsupported property). Subscribed vs local is chosen by content_library_url.
   local body
-  body=$(jq -n --arg name "${CONTENT_LIB}" --arg ds "${ds_id}" \
-    '{ name: $name, type: "LOCAL",
-       storage_backings: [ { type: "DATASTORE", datastore_id: $ds } ],
-       description: "Nested lab content library" }')
-  vc_api POST "${VCSA_IP}" "${_WCP_TOK}" \
-    "/api/content/local-library" \
-    -d "$body" >/dev/null \
-    || die "Failed to create content library '${CONTENT_LIB}'"
+  if [[ -n "${CONTENT_LIB_URL}" ]]; then
+    log "Creating SUBSCRIBED content library '${CONTENT_LIB}' (${CONTENT_LIB_URL}, on_demand=${CONTENT_LIB_ON_DEMAND}) ..."
+    body=$(jq -n \
+      --arg name "${CONTENT_LIB}" --arg ds "${ds_id}" --arg url "${CONTENT_LIB_URL}" \
+      --argjson ondemand "${CONTENT_LIB_ON_DEMAND}" \
+      '{ name: $name, type: "SUBSCRIBED",
+         storage_backings: [ { type: "DATASTORE", datastore_id: $ds } ],
+         subscription_info: {
+           authentication_method: "NONE",
+           automatic_sync_enabled: false,
+           on_demand: $ondemand,
+           subscription_url: $url
+         } }')
+    vc_api POST "${VCSA_IP}" "${_WCP_TOK}" "/api/content/subscribed-library" \
+      -d "$body" >/dev/null \
+      || die "Failed to create subscribed content library '${CONTENT_LIB}'"
+  else
+    log "Creating LOCAL content library '${CONTENT_LIB}' ..."
+    body=$(jq -n --arg name "${CONTENT_LIB}" --arg ds "${ds_id}" \
+      '{ name: $name, type: "LOCAL",
+         storage_backings: [ { type: "DATASTORE", datastore_id: $ds } ],
+         description: "Nested lab content library" }')
+    vc_api POST "${VCSA_IP}" "${_WCP_TOK}" "/api/content/local-library" \
+      -d "$body" >/dev/null \
+      || die "Failed to create content library '${CONTENT_LIB}'"
+  fi
   ok "Content library '${CONTENT_LIB}' created."
 }
 

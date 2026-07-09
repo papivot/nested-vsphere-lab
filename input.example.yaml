@@ -150,7 +150,11 @@ stage2:
     control_plane_size: tiny     # tiny | small | medium | large
     control_plane_count: 1       # supervisor control-plane VMs (1 for a light lab; 3 for HA)
     service_cidr: 10.96.0.0/23   # internal k8s ClusterIP range
-    content_library: nested-lab-lib
+    content_library: tkg-content-library
+    # Subscribed TKr (Tanzu Kubernetes releases) library. Leave content_library_url
+    # blank to instead create an empty LOCAL library.
+    content_library_url: https://wp-content.broadcom.com/v2/latest/lib.json
+    content_library_on_demand: true   # sync on demand (metadata only until an image is needed)
     storage_policy: vsan-default
     # IP ranges (start + count). Must sit OUTSIDE the DHCP pool (.193-.254) and
     # avoid the ESXi/VCSA static IPs. The VIP range must be routed to the
