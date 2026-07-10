@@ -15,7 +15,7 @@ LAB2_INFO_FILE=/etc/nested-lab/lab2-info.txt
 
 # Per-nested-ESXi arrays (populated by compute_derived from dns.records).
 declare -a NESXI_NAME NESXI_IP NESXI_FQDN
-# ESA data-disk sizes (GiB), one per disk beyond the boot disk.
+# vSAN data-disk sizes (GiB), one per disk beyond the boot disk (cache + capacity).
 declare -a ESXI_DATA_DISK_GB
 
 # Uppercase a string (TINY/SMALL/... for the WCP API). bash 3.2 safe.
