@@ -222,6 +222,21 @@ _remove_standalone_host() {
     || warn "Could not remove standalone host ${fqdn}; remove it manually if the cluster add fails."
 }
 
+# _host_leave_vsan_direct <esxi-ip>
+# Make a nested ESXi leave any vSAN cluster it is still a member of, talking to
+# the host directly (it is not yet in vCenter inventory). vSAN membership lives
+# at the ESXi level, so re-running over hosts from a prior deployment makes
+# cluster.add fail with "vSAN host cannot be moved to the destination cluster:
+# ... vSAN disabled". Leaving first clears that; it is a harmless no-op on a
+# freshly deployed host that was never in a vSAN cluster.
+_host_leave_vsan_direct() {
+  local ip="$1"
+  GOVC_URL="https://${ip}/sdk" GOVC_USERNAME="root" \
+    GOVC_PASSWORD="${ESXI_ROOT_PASSWORD}" GOVC_INSECURE=true \
+    GOVC_DATACENTER="" GOVC_DATASTORE="" \
+    govc host.esxcli -k vsan cluster leave >/dev/null 2>&1 || true
+}
+
 # 3. Add nested ESXi hosts to the cluster (by FQDN; thumbprint fetched explicitly).
 _add_hosts_to_cluster() {
   local cluster_path="/${CLUSTER_DC}/host/${CLUSTER_NAME}" i
@@ -240,6 +255,8 @@ _add_hosts_to_cluster() {
       warn "Host '${fqdn}' is registered standalone; removing before cluster add ..."
       govc host.remove -k "${leftover}" 2>/dev/null || true
     fi
+    # Clear residual vSAN membership so the (vSAN-disabled) cluster accepts it.
+    _host_leave_vsan_direct "${NESXI_IP[$i]}"
     log "Adding host '${fqdn}' to cluster ..."
     # -noverify accepts the nested ESXi self-signed cert without a thumbprint
     # (matches scratch/create-cluster.sh). Do NOT pass -thumbprint from
