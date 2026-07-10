@@ -182,7 +182,7 @@ _seed_depot_from_host() {
   if [[ -n "$draft" && "${draft:0:1}" != "{" ]]; then
     curl -sk -X POST -H "vmware-api-session-id: ${tok}" \
       -H "Content-Type: application/json" \
-      "${base}/${draft}?action=commit" >/dev/null 2>&1 || true
+      "${base}/${draft}?action=commit&vmw-task=true" >/dev/null 2>&1 || true
   else
     warn "Could not open a host software draft on ${seed_fqdn} (got: ${draft:-<none>}); relying on the depot poll."
   fi
@@ -332,8 +332,11 @@ _align_cluster_image() {
     -d "$(_render_base_image_spec "$want")" >/dev/null \
     || die "Could not set the draft base image to '${want}'"
 
+  # Commit is a task-only operation: it exists only with vmw-task=true (a plain
+  # ?action=commit returns HTTP 404). We poll the committed image below rather
+  # than waiting on the returned task id.
   vc_api POST "${VCSA_IP}" "$tok" \
-    "/api/esx/settings/clusters/${moid}/software/drafts/${draft}?action=commit" >/dev/null \
+    "/api/esx/settings/clusters/${moid}/software/drafts/${draft}?action=commit&vmw-task=true" >/dev/null \
     || die "Could not commit the vLCM software draft"
 
   # Poll the committed desired image until it reflects the new base image.
