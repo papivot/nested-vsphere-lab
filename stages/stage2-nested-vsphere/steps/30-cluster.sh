@@ -2,19 +2,36 @@
 # ============================================================================
 # cluster :: Build the nested vSphere cluster inside the newly deployed vCenter.
 #   1. Create datacenter + cluster (+ DRS)
-#   2. Add nested ESXi hosts to the cluster
-#   3. Create VDS + portgroups (one per Stage 1 VLAN + edge trunk uplinks)
-#   4. Add hosts to the VDS; enable vSAN + vMotion vmk services; exit maint.
-#   5. Enable vSAN (OSA or ESA) + HA:
+#   2. Seed the vCenter vLCM depot with the nested ESXi image ("host seed"): add
+#      the first host standalone, extract its running image into the depot, then
+#      remove it. A fresh vCenter only ships older bundled base images, so
+#      without this the 9.x nested build is absent from the depot and neither
+#      the cluster image nor Supervisor can be made compliant.
+#   3. Add nested ESXi hosts to the cluster
+#   4. Align the cluster's vLCM desired image to the ESXi build the hosts run.
+#      A fresh 9.x cluster is auto-managed with a single image from the
+#      vCenter's *bundled* base (an older 8.0U3), which does NOT match the
+#      nested hosts -- and Supervisor refuses to install the Spherelet on an
+#      image-noncompliant cluster. We create a draft, set base_image.version to
+#      the build the hosts run (now in the depot from step 2), and commit. The
+#      hosts are then already compliant, so no remediation/reboot is triggered.
+#   5. Create VDS + portgroups (one per Stage 1 VLAN + edge trunk uplinks)
+#   6. Add hosts to the VDS; enable vSAN + vMotion vmk services; exit maint.
+#   7. Enable vSAN (OSA or ESA) + HA:
 #        - OSA (default; lighter, best for nested): govc cluster.change
 #          -vsan-enabled -ha-enabled + per-host disk group via
 #          `esxcli vsan storage add` (ported from scratch/create-cluster.sh.osa).
 #        - ESA: vim25 SOAP-REST ReconfigureComputeResource_Task with
 #          vsanEsaEnabled (from scratch/create-cluster.sh) + autoclaim.
-#   6. Create the WCP storage tag + policy (mode-independent).
+#   8. Create the WCP storage tag + policy (mode-independent).
 # ============================================================================
 
 # ---- pure render fns: vim25 ClusterConfigSpecEx bodies (bats-testable) -----
+
+# vLCM draft BaseImageSpec: the desired ESXi base-image version for the cluster.
+_render_base_image_spec() {
+  jq -n --arg v "$1" '{ "version": $v }'
+}
 
 _render_vsan_spec() {
   jq -n '{
@@ -55,7 +72,9 @@ step_cluster() {
   govc_target nested-vc
 
   _create_dc_and_cluster
+  _seed_depot_from_host
   _add_hosts_to_cluster
+  _align_cluster_image
   _create_vds_and_portgroups
   _add_hosts_to_vds
   _configure_vsan
@@ -85,7 +104,125 @@ _create_dc_and_cluster() {
     || warn "Could not set DRS on '${CLUSTER_NAME}' (may already be enabled)"
 }
 
-# 2. Add nested ESXi hosts to the cluster (by FQDN; thumbprint fetched explicitly).
+# _depot_version_for_build <token> <build>
+# Print the vLCM depot base-image version whose build matches <build> (depot
+# version strings look like "9.1.0.0.25370933" -- end with ".<build>"). Empty
+# if the depot has no matching base image. Soft (never dies) so callers can use
+# it both as a gate and as a poll predicate.
+_depot_version_for_build() {
+  curl -sk -H "vmware-api-session-id: ${1}" \
+    "https://${VCSA_IP}/api/esx/settings/depot-content/base-images" 2>/dev/null \
+    | jq -r --arg b ".${2}" \
+        '[.[] | select(.version | endswith($b))] | first | .version // empty' \
+        2>/dev/null || true
+}
+
+# 2. Seed the vCenter vLCM depot with the image the nested hosts run ("host
+#    seed"). A fresh vCenter ships only older bundled base images, so the 9.x
+#    nested build is absent from the depot -- and neither the cluster image nor
+#    Supervisor can be made compliant without it. The offline fix: add the first
+#    ESXi as a STANDALONE host, enable host-level image management (which runs
+#    the host-seed extraction, importing its running image into the depot), then
+#    remove it. The remaining hosts join the cluster normally; depot content
+#    persists independent of the host.
+#
+#    Requires the nested ESXi to have a persistent ESX-OSData volume (the OVA's
+#    boot disk provides it); otherwise extraction fails with "No OSData storage
+#    partition is available to extract image".
+#
+#    Idempotent: if the depot already has a base image matching the host build
+#    (a re-run, or an already-seeded vCenter), the whole step is a no-op.
+_seed_depot_from_host() {
+  local seed_fqdn="${NESXI_FQDN[0]}"
+  local tok
+  tok=$(vc_session "${VCSA_IP}" "${VCSA_USER}" "${VCSA_SSO_PASSWORD}") \
+    || die "Could not create vCenter session"
+
+  # Add the seed host standalone (idempotent) so we can read its build + extract.
+  if govc find -k "/${CLUSTER_DC}/host" -type h -name "${seed_fqdn}" 2>/dev/null | grep -q .; then
+    ok "Seed host '${seed_fqdn}' already present in inventory."
+  else
+    log "Adding '${seed_fqdn}' as a standalone host (for image extraction) ..."
+    govc host.add -k -hostname "${seed_fqdn}" -username root \
+      -password "${ESXI_ROOT_PASSWORD}" -noverify -force \
+      || die "Could not add standalone seed host ${seed_fqdn}"
+  fi
+
+  local host_path
+  host_path=$(govc find -k "/${CLUSTER_DC}/host" -type h -name "${seed_fqdn}" 2>/dev/null | head -1)
+  [[ -n "$host_path" ]] || die "Seed host ${seed_fqdn} not found in inventory after add"
+
+  local build
+  build=$(govc object.collect -k -s "${host_path}" config.product.build 2>/dev/null || true)
+  [[ -n "$build" ]] || die "Could not read ESXi build from seed host ${seed_fqdn}"
+
+  # Already seeded? Then remove the standalone host and return (idempotent).
+  if [[ -n "$(_depot_version_for_build "$tok" "$build")" ]]; then
+    ok "Depot already has a base image for build ${build}; skipping extraction."
+    _remove_standalone_host "$host_path" "$seed_fqdn"
+    return
+  fi
+
+  # Host MOID (e.g. host-16) for the esx/settings API.
+  local moid
+  moid=$(govc find -k -i "/${CLUSTER_DC}/host" -type h -name "${seed_fqdn}" 2>/dev/null | head -1)
+  moid="${moid##*:}"
+  [[ -n "$moid" ]] || die "Could not resolve MOID for seed host ${seed_fqdn}"
+
+  log "Extracting the running image from ${seed_fqdn} into the vCenter depot (host seed) ..."
+  # Enable host-level image management by committing a draft of the host's
+  # current software. Committing triggers the host-seed extraction, which
+  # imports the host's base image + components into the vCenter depot. Errors
+  # here are non-fatal: the true success criterion is depot state (polled below),
+  # so a slightly different trigger on some builds still self-corrects.
+  local base="https://${VCSA_IP}/api/esx/settings/hosts/${moid}/software/drafts"
+  local draft
+  draft=$(curl -sk -X POST -H "vmware-api-session-id: ${tok}" \
+    -H "Content-Type: application/json" "$base" 2>/dev/null | tr -d '"')
+  if [[ -n "$draft" && "${draft:0:1}" != "{" ]]; then
+    curl -sk -X POST -H "vmware-api-session-id: ${tok}" \
+      -H "Content-Type: application/json" \
+      "${base}/${draft}?action=commit" >/dev/null 2>&1 || true
+  else
+    warn "Could not open a host software draft on ${seed_fqdn} (got: ${draft:-<none>}); relying on the depot poll."
+  fi
+
+  # Poll the depot -- extraction is asynchronous. This is the real gate.
+  local elapsed=0 max=600
+  while (( elapsed < max )); do
+    [[ -n "$(_depot_version_for_build "$tok" "$build")" ]] && break
+    sleep 15; (( elapsed += 15 )) || true
+    log "  waiting for the host image to extract into the depot (${elapsed}/${max}s) ..."
+  done
+  if [[ -z "$(_depot_version_for_build "$tok" "$build")" ]]; then
+    die "The vCenter depot never received a base image for build ${build}.
+  Automated host-seed extraction did not populate the depot. Seed it once by hand:
+    vCenter UI -> add host '${seed_fqdn}' as a standalone host ->
+    'Extract the image on the host' -> finish. Then re-run:
+      sudo ./run.sh --stage 2 --from-step cluster
+  Also confirm the nested ESXi has a persistent ESX-OSData volume (see the OVA
+  boot disk sizing)."
+  fi
+  ok "Depot seeded with the nested ESXi image (build ${build})."
+
+  _remove_standalone_host "$host_path" "$seed_fqdn"
+}
+
+# _remove_standalone_host <host-path> <fqdn>
+# Remove the standalone seed host so _add_hosts_to_cluster can add it to the
+# cluster cleanly. The extracted depot content persists. Idempotent, and a
+# no-op if the host has already been placed inside the cluster.
+_remove_standalone_host() {
+  local host_path="$1" fqdn="$2"
+  case "$host_path" in
+    "/${CLUSTER_DC}/host/${CLUSTER_NAME}/"*) return 0 ;;   # already inside the cluster
+  esac
+  log "Removing standalone seed host '${fqdn}' (depot content persists) ..."
+  govc host.remove -k "${host_path}" 2>/dev/null \
+    || warn "Could not remove standalone host ${fqdn}; remove it manually if the cluster add fails."
+}
+
+# 3. Add nested ESXi hosts to the cluster (by FQDN; thumbprint fetched explicitly).
 _add_hosts_to_cluster() {
   local cluster_path="/${CLUSTER_DC}/host/${CLUSTER_NAME}" i
   for ((i=0; i<N_NESXI; i++)); do
@@ -93,6 +230,15 @@ _add_hosts_to_cluster() {
     if govc find "${cluster_path}" -type h -name "${fqdn}" 2>/dev/null | grep -q .; then
       ok "Host '${fqdn}' already in cluster."
       continue
+    fi
+    # If the host is still registered standalone (e.g. the seed host whose
+    # removal did not complete), drop that registration first so cluster.add
+    # does not fail with "host already managed by this vCenter".
+    local leftover
+    leftover=$(govc find -k "/${CLUSTER_DC}/host" -type h -name "${fqdn}" 2>/dev/null | head -1)
+    if [[ -n "$leftover" ]]; then
+      warn "Host '${fqdn}' is registered standalone; removing before cluster add ..."
+      govc host.remove -k "${leftover}" 2>/dev/null || true
     fi
     log "Adding host '${fqdn}' to cluster ..."
     # -noverify accepts the nested ESXi self-signed cert without a thumbprint
@@ -110,7 +256,83 @@ _add_hosts_to_cluster() {
   done
 }
 
-# 3. Create the VDS + one portgroup per Stage 1 VLAN + two ephemeral trunk
+# 4. Align the cluster's vLCM desired image with the build the hosts run.
+#    Idempotent: skips when the committed base image already matches the hosts.
+#    Deterministic -- the target version is read from a host in the cluster and
+#    matched against the vCenter depot, so it tracks whatever ESXi build the OVA
+#    ships (no hardcoded version string).
+_align_cluster_image() {
+  local host_path="/${CLUSTER_DC}/host/${CLUSTER_NAME}/${NESXI_FQDN[0]}"
+
+  # Build number of a host already in the cluster (e.g. 25370933).
+  local build
+  build=$(govc object.collect -k -s "$host_path" config.product.build 2>/dev/null || true)
+  [[ -n "$build" ]] || die "Could not read ESXi build from ${NESXI_FQDN[0]} to align the cluster image"
+
+  local tok moid
+  tok=$(vc_session "${VCSA_IP}" "${VCSA_USER}" "${VCSA_SSO_PASSWORD}") \
+    || die "Could not create vCenter session"
+  moid=$(vc_api GET "${VCSA_IP}" "$tok" "/api/vcenter/cluster" \
+    | jq -r --arg n "${CLUSTER_NAME}" '.[] | select(.name == $n) | .cluster' | head -1)
+  [[ -n "$moid" ]] || die "Could not resolve cluster MOID for '${CLUSTER_NAME}'"
+
+  # Desired base-image version = the depot entry whose build matches the host.
+  local want
+  want=$(_depot_version_for_build "$tok" "$build")
+  [[ -n "$want" ]] \
+    || die "No vCenter depot base image matches ESXi build ${build}. Seed the depot first (the 'seed depot from host' step should have handled this)."
+
+  # Current committed desired image; skip if it already matches.
+  local cur
+  cur=$(vc_api GET "${VCSA_IP}" "$tok" "/api/esx/settings/clusters/${moid}/software" \
+    | jq -r '.base_image.version // empty')
+  if [[ "$cur" == "$want" ]]; then
+    ok "Cluster desired image already '${want}' (matches hosts); skipping alignment."
+    return
+  fi
+  log "Aligning cluster desired image '${cur:-<none>}' -> '${want}' (host build ${build}) ..."
+
+  # vLCM allows a single draft per user per cluster; clear any stale one so a
+  # re-run after a mid-step failure converges instead of erroring on AlreadyExists.
+  local d
+  for d in $(vc_api GET "${VCSA_IP}" "$tok" \
+      "/api/esx/settings/clusters/${moid}/software/drafts" 2>/dev/null \
+      | jq -r 'keys[]? // empty'); do
+    vc_api DELETE "${VCSA_IP}" "$tok" \
+      "/api/esx/settings/clusters/${moid}/software/drafts/${d}" >/dev/null 2>&1 || true
+  done
+
+  # Draft is initialised from the current desired document; we override only the
+  # base image, then commit. Committing merely records the desired image -- the
+  # hosts already run this build, so they stay compliant with no remediation.
+  local draft
+  draft=$(vc_api POST "${VCSA_IP}" "$tok" \
+    "/api/esx/settings/clusters/${moid}/software/drafts" | tr -d '"')
+  [[ -n "$draft" ]] || die "Could not create a vLCM software draft on '${CLUSTER_NAME}'"
+
+  vc_api PUT "${VCSA_IP}" "$tok" \
+    "/api/esx/settings/clusters/${moid}/software/drafts/${draft}/software/base-image" \
+    -d "$(_render_base_image_spec "$want")" >/dev/null \
+    || die "Could not set the draft base image to '${want}'"
+
+  vc_api POST "${VCSA_IP}" "$tok" \
+    "/api/esx/settings/clusters/${moid}/software/drafts/${draft}?action=commit" >/dev/null \
+    || die "Could not commit the vLCM software draft"
+
+  # Poll the committed desired image until it reflects the new base image.
+  local elapsed=0 max=300
+  while (( elapsed < max )); do
+    cur=$(vc_api GET "${VCSA_IP}" "$tok" "/api/esx/settings/clusters/${moid}/software" \
+      | jq -r '.base_image.version // empty')
+    [[ "$cur" == "$want" ]] && break
+    sleep 10; (( elapsed += 10 )) || true
+    log "  waiting for desired image to commit (${elapsed}/${max}s) ..."
+  done
+  [[ "$cur" == "$want" ]] || die "Cluster desired image did not converge to '${want}'"
+  ok "Cluster desired image set to '${want}' (matches nested hosts; Supervisor-ready)."
+}
+
+# 5. Create the VDS + one portgroup per Stage 1 VLAN + two ephemeral trunk
 #    uplinks for the Supervisor edge/FLB.
 _create_vds_and_portgroups() {
   local dvs_path="/${CLUSTER_DC}/network/${VDS_NAME}"
@@ -159,7 +381,7 @@ _create_vds_and_portgroups() {
   done
 }
 
-# 4. Add each host to the VDS uplink and enable vSAN + vMotion on vmk0.
+# 6. Add each host to the VDS uplink and enable vSAN + vMotion on vmk0.
 _add_hosts_to_vds() {
   local cluster_path="/${CLUSTER_DC}/host/${CLUSTER_NAME}" i
   for ((i=0; i<N_NESXI; i++)); do
@@ -203,7 +425,7 @@ _add_hosts_to_vds() {
   done
 }
 
-# 5. Enable vSAN (OSA or ESA) + HA. Idempotent: skip once the datastore exists.
+# 7. Enable vSAN (OSA or ESA) + HA. Idempotent: skip once the datastore exists.
 _configure_vsan() {
   if govc_object_exists "/${CLUSTER_DC}/datastore/${VSAN_DS}"; then
     ok "vSAN datastore '${VSAN_DS}' already present (mode=${VSAN_MODE}); skipping enable."
@@ -315,7 +537,7 @@ _wait_for_vsan_datastore() {
   ok "vSAN datastore '${VSAN_DS}' is visible."
 }
 
-# 6. WCP storage tag + policy (idempotent create-if-absent). Mode-independent.
+# 8. WCP storage tag + policy (idempotent create-if-absent). Mode-independent.
 _create_storage_policy() {
   local cat="${STORAGE_POLICY}-cat" tag="${STORAGE_POLICY}-tag"
   govc tags.category.info -k "$cat" >/dev/null 2>&1 \
