@@ -518,10 +518,21 @@ _build_osa_disk_group() {
     || die "Could not identify OSA cache(${ESXI_CACHE_GB}G)/capacity(${ESXI_CAP_GB}G) disks on ${fqdn}"
   log "OSA disk group on ${fqdn}: cache=${cachedisk} capacity=${datadisk}"
 
+  # Nested re-run safety: the target disks may still carry a vSAN claim from a
+  # prior deployment ("Unable to add device: ... In use by vSAN"). Release any
+  # stale disk group / claim first -- removing by the cache SSD tears down the
+  # whole group, then drop any lingering capacity-disk claim. Both are no-ops on
+  # freshly deployed blank disks.
+  govc host.esxcli -k -host "$fqdn" vsan storage remove -s "$cachedisk" 2>/dev/null || true
+  govc host.esxcli -k -host "$fqdn" vsan storage remove -d "$datadisk"  2>/dev/null || true
+
   govc host.esxcli -k -host "$fqdn" vsan storage tag add -d "$datadisk" -t capacityFlash \
     2>/dev/null || true
-  govc host.esxcli -k -host "$fqdn" vsan storage add -s "$cachedisk" -d "$datadisk" \
-    || die "esxcli vsan storage add failed on ${fqdn}"
+  if ! govc host.esxcli -k -host "$fqdn" vsan storage add -s "$cachedisk" -d "$datadisk"; then
+    warn "vsan storage add failed on ${fqdn}; current vSAN storage state:"
+    govc host.esxcli -k -host "$fqdn" vsan storage list 2>&1 | sed 's/^/    /' || true
+    die "esxcli vsan storage add failed on ${fqdn}. If a disk is still 'in use by vSAN' from a prior deployment, its on-disk vSAN partitions persist -- wipe/redeploy the nested ESXi (rollback esxi + re-run), or clear the disks with partedUtil, then re-run."
+  fi
   ok "vSAN OSA disk group created on ${fqdn}."
 }
 
