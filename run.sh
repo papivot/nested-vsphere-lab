@@ -78,12 +78,21 @@ EOF
   exit "${1:-0}"
 }
 
+# need_arg <flag> <value> — error out (with usage) if a value-taking flag was
+# given no argument, or was followed by another flag. Avoids a `set -u`
+# "unbound variable" crash on e.g. `--rollback` with no step.
+need_arg() {
+  case "${2:-}" in
+    ""|-*) echo "ERROR: option '$1' requires an argument." >&2; usage 2 ;;
+  esac
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --input)     INPUT_FILE="$2"; shift 2 ;;
-    --stage)     STAGE="$2"; shift 2 ;;
-    --from-step) FROM_STEP="$2"; shift 2 ;;
-    --rollback)  MODE="rollback"; ROLLBACK_STEP="$2"; shift 2 ;;
+    --input)     need_arg "$1" "${2:-}"; INPUT_FILE="$2"; shift 2 ;;
+    --stage)     need_arg "$1" "${2:-}"; STAGE="$2"; shift 2 ;;
+    --from-step) need_arg "$1" "${2:-}"; FROM_STEP="$2"; shift 2 ;;
+    --rollback)  need_arg "$1" "${2:-}"; MODE="rollback"; ROLLBACK_STEP="$2"; shift 2 ;;
     --verify)    MODE="verify"; shift ;;
     --check)     MODE="check"; shift ;;
     --force)     FORCE=1; shift ;;
