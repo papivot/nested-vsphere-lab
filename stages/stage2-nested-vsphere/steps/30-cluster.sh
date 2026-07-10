@@ -150,25 +150,27 @@ _seed_depot_from_host() {
   moid="${moid##*:}"
   [[ -n "$moid" ]] || die "Could not resolve MOID for seed host ${seed_fqdn}"
 
-  log "Extracting the running image from ${seed_fqdn} into the vCenter depot (host seed) ..."
-  # Enable host-level image management by committing a draft of the host's
-  # current software. Committing triggers the host-seed extraction, which
-  # imports the host's base image + components into the vCenter depot. Errors
-  # here are non-fatal: the true success criterion is depot state (polled below),
-  # so a slightly different trigger on some builds still self-corrects.
-  local base="https://${VCSA_IP}/api/esx/settings/hosts/${moid}/software/drafts"
-  local draft
-  draft=$(curl -sk -X POST -H "vmware-api-session-id: ${tok}" \
-    -H "Content-Type: application/json" "$base" 2>/dev/null | tr -d '"')
-  if [[ -n "$draft" && "${draft:0:1}" != "{" ]]; then
-    curl -sk -X POST -H "vmware-api-session-id: ${tok}" \
-      -H "Content-Type: application/json" \
-      "${base}/${draft}?action=commit&vmw-task=true" -d '{}' >/dev/null 2>&1 || true
-  else
-    warn "Could not open a host software draft on ${seed_fqdn} (got: ${draft:-<none>}); relying on the depot poll."
-  fi
+  log "Transitioning ${seed_fqdn} to vLCM single-image management (extracts its image into the depot) ..."
+  # The image extraction ("host seed") is a side effect of ENABLING single-image
+  # management on the standalone host -- NOT a plain draft commit, and NOT a
+  # side effect of a bare host add (govc host.add adds a plain host). This is the
+  # API the add-host wizard's "Extract the image on the host" runs server-side:
+  #   com.vmware.esx.settings.hosts.enablement.Software.enable  ->
+  #   POST /api/esx/settings/hosts/{host}/enablement/software?action=enable
+  # Enabling imports the host's base image + components into the vCenter depot.
+  local enable_url="https://${VCSA_IP}/api/esx/settings/hosts/${moid}/enablement/software?action=enable&vmw-task=true"
+  local enable_resp enable_code enable_body
+  enable_resp=$(curl -sk -w $'\n%{http_code}' -X POST \
+    -H "vmware-api-session-id: ${tok}" -H "Content-Type: application/json" \
+    "$enable_url" -d '{}' 2>/dev/null || true)
+  enable_code="${enable_resp##*$'\n'}"
+  enable_body="${enable_resp%$'\n'*}"
+  case "$enable_code" in
+    2*) log "Single-image enablement task accepted (HTTP ${enable_code}); extraction runs asynchronously." ;;
+    *)  warn "Host enablement returned HTTP ${enable_code:-none}: ${enable_body:-<none>}" ;;
+  esac
 
-  # Poll the depot -- extraction is asynchronous. This is the real gate.
+  # Poll the depot -- extraction is asynchronous. Depot state is the real gate.
   local elapsed=0 max=600
   while (( elapsed < max )); do
     [[ -n "$(_depot_version_for_build "$tok" "$build")" ]] && break
@@ -177,12 +179,13 @@ _seed_depot_from_host() {
   done
   if [[ -z "$(_depot_version_for_build "$tok" "$build")" ]]; then
     die "The vCenter depot never received a base image for build ${build}.
-  Automated host-seed extraction did not populate the depot. Seed it once by hand:
-    vCenter UI -> add host '${seed_fqdn}' as a standalone host ->
-    'Extract the image on the host' -> finish. Then re-run:
-      sudo ./run.sh --stage 2 --from-step cluster
-  Also confirm the nested ESXi has a persistent ESX-OSData volume (see the OVA
-  boot disk sizing)."
+  Host-seed extraction did not populate the depot (last enablement HTTP ${enable_code:-none}: ${enable_body:-<none>}).
+  '${seed_fqdn}' is already added as a standalone host, so you can seed it by hand:
+    vCenter UI -> Hosts and Clusters -> select ${seed_fqdn} -> Updates -> Image
+      -> Manage with a single image -> 'Extract the image on the host' -> Save.
+  Then re-run:  sudo ./run.sh --stage 2 --from-step cluster
+  If the UI extraction also fails, confirm the nested ESXi has a persistent
+  ESX-OSData volume on a dedicated disk (not ramdisk)."
   fi
   ok "Depot seeded with the nested ESXi image (build ${build})."
 
