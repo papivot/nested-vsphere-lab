@@ -77,16 +77,16 @@ compute_derived() {
   ESXI_CPU=$(cfg '.stage2.esxi.cpu'    '8')
   ESXI_MEM=$(cfg '.stage2.esxi.mem_gb' '48')
 
-  # disk[0] = boot; every disk beyond that is a data disk (created for both
-  # vSAN modes). ESA pools them all; OSA needs one 'vsan_cache' + one
-  # 'vsan_capacity' disk of DISTINCT sizes (identified by size at claim time).
+  # disk[0] = boot; every disk beyond that is a data disk. vSAN OSA needs exactly
+  # one 'vsan_cache' + one 'vsan_capacity' disk of DISTINCT sizes (identified by
+  # size at claim time).
   ESXI_DISK_BOOT=$(cfg '.stage2.esxi.disks[0].size_gb' '32')
   ESXI_DATA_DISK_GB=()
   ESXI_CACHE_GB=""; ESXI_CAP_GB=""
   local n_disks lbl sz; n_disks=$(cfg_len '.stage2.esxi.disks')
   for ((i=1; i<n_disks; i++)); do
     sz=$(cfg ".stage2.esxi.disks[$i].size_gb" '400')
-    lbl=$(cfg ".stage2.esxi.disks[$i].label" 'vsan_data')
+    lbl=$(cfg ".stage2.esxi.disks[$i].label" 'vsan_capacity')
     ESXI_DATA_DISK_GB+=( "$sz" )
     case "$lbl" in
       *cache*) ESXI_CACHE_GB="$sz" ;;
@@ -125,6 +125,11 @@ compute_derived() {
   VCSA_SSO_DOMAIN=$(cfg '.stage2.vcsa.sso_domain' 'vsphere.local')
   VCSA_SIZE=$(cfg '.stage2.vcsa.size' 'tiny')
   VCSA_ISO_MOUNT=$(cfg '.stage2.vcsa.iso_mount' '/mnt/vcsa-iso')
+  # vcsa-deploy deploys at a fixed deployment_option size; we resize the VCSA VM
+  # to these values afterward (hot-add if the appliance supports it, else a
+  # power-cycle). Only ever increased — see steps/20-vcenter.sh.
+  VCSA_CPU=$(cfg '.stage2.vcsa.cpu' '6')
+  VCSA_MEM_GB=$(cfg '.stage2.vcsa.mem_gb' '26')
 
   VCSA_IP=""
   for ((i=0; i<n_rec; i++)); do
@@ -150,18 +155,15 @@ compute_derived() {
   VDS_UPLINK_PNIC=$(cfg '.stage2.cluster.uplink_pnic' 'vmnic1')
   VSAN_FTT=$(cfg '.stage2.cluster.vsan.ftt'       '1')
   VSAN_DS=$(cfg '.stage2.cluster.vsan.datastore_name' 'vsanDatastore')
-  # vSAN architecture: osa (default; lighter, best for nested) or esa.
-  VSAN_MODE=$(cfg '.stage2.cluster.vsan.mode' 'osa' | tr '[:upper:]' '[:lower:]')
-  [[ "$VSAN_MODE" == "osa" || "$VSAN_MODE" == "esa" ]] \
-    || die "stage2.cluster.vsan.mode must be 'osa' or 'esa' (got '${VSAN_MODE}')"
-  if [[ "$VSAN_MODE" == "osa" ]]; then
-    [[ -n "$ESXI_CACHE_GB" && -n "$ESXI_CAP_GB" ]] \
-      || die "vSAN OSA needs disks labelled 'vsan_cache' and 'vsan_capacity' under stage2.esxi.disks"
-    [[ "$ESXI_CACHE_GB" != "$ESXI_CAP_GB" \
-       && "$ESXI_CACHE_GB" != "$ESXI_DISK_BOOT" \
-       && "$ESXI_CAP_GB"   != "$ESXI_DISK_BOOT" ]] \
-      || die "vSAN OSA needs boot/cache/capacity disks of DISTINCT sizes (boot=${ESXI_DISK_BOOT} cache=${ESXI_CACHE_GB} cap=${ESXI_CAP_GB}); they are matched by size at claim time"
-  fi
+  # vSAN OSA disk group: one 'vsan_cache' + one 'vsan_capacity' disk of DISTINCT
+  # sizes (matched by size at claim time). OSA is used deliberately — far
+  # lighter on memory than ESA, which suits nested hosts.
+  [[ -n "$ESXI_CACHE_GB" && -n "$ESXI_CAP_GB" ]] \
+    || die "vSAN OSA needs disks labelled 'vsan_cache' and 'vsan_capacity' under stage2.esxi.disks"
+  [[ "$ESXI_CACHE_GB" != "$ESXI_CAP_GB" \
+     && "$ESXI_CACHE_GB" != "$ESXI_DISK_BOOT" \
+     && "$ESXI_CAP_GB"   != "$ESXI_DISK_BOOT" ]] \
+    || die "vSAN OSA needs boot/cache/capacity disks of DISTINCT sizes (boot=${ESXI_DISK_BOOT} cache=${ESXI_CACHE_GB} cap=${ESXI_CAP_GB}); they are matched by size at claim time"
 
   # ---- Supervisor: names, sizing, storage ----
   SUPERVISOR_NAME=$(cfg '.stage2.supervisor.name' 'supervisor')
@@ -245,9 +247,9 @@ compute_derived() {
   export S2_PROFILE ESXI_OVA ESXI_OVA_NETWORK ESXI_DNS_PREFIX ESXI_CPU ESXI_MEM
   export ESXI_DISK_BOOT ESXI_DISK_TOTAL_GB ESXI_CACHE_GB ESXI_CAP_GB N_NESXI
   export ESXI_MGMT_CIDR ESXI_NETMASK ESXI_GW
-  export VCSA_ISO VCSA_ISO_MOUNT VCSA_DNS_NAME VCSA_SSO_DOMAIN VCSA_SIZE
+  export VCSA_ISO VCSA_ISO_MOUNT VCSA_DNS_NAME VCSA_SSO_DOMAIN VCSA_SIZE VCSA_CPU VCSA_MEM_GB
   export VCSA_IP VCSA_FQDN VCSA_USER VCSA_PREFIX VCSA_GW
-  export CLUSTER_NAME CLUSTER_DC VDS_NAME VDS_VERSION VDS_UPLINK_PNIC VSAN_FTT VSAN_DS VSAN_MODE
+  export CLUSTER_NAME CLUSTER_DC VDS_NAME VDS_VERSION VDS_UPLINK_PNIC VSAN_FTT VSAN_DS
   export SUPER_MGMT_NET SUPER_MGMT_VLAN_ID SUPER_MGMT_CIDR
   export SUPER_WKLD_NET SUPER_WKLD_VLAN_ID SUPER_WKLD_CIDR
   export MGMT_PG_NAME WKLD_PG_NAME
@@ -262,7 +264,7 @@ compute_derived() {
   export FLB_VIP_STARTING_IP FLB_VIP_IP_COUNT
   export DOMAIN ARTIFACTS_DIR CERTS_DIR CA_BUNDLE REGISTRY_FQDN NATIVE_GW
 
-  log "Stage 2 model: profile=${S2_PROFILE} target=${UNDERLYING_HOST} nested_esxi=${N_NESXI} vcsa=${VCSA_FQDN}(${VCSA_IP}) vsan=${VSAN_MODE}"
+  log "Stage 2 model: profile=${S2_PROFILE} target=${UNDERLYING_HOST} nested_esxi=${N_NESXI} vcsa=${VCSA_FQDN}(${VCSA_IP}) vsan=OSA"
 }
 
 # Source every step + rollback definition.

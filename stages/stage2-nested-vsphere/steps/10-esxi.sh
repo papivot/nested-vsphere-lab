@@ -11,8 +11,7 @@
 # extraConfig. The template's PropertyMapping additionally covers vCenter targets.
 #
 # Each VM = 1 boot disk (from the OVA) + the data disks in ESXI_DATA_DISK_GB,
-# added BEFORE first power-on (OSA: 1 cache + 1 capacity of distinct sizes;
-# ESA: pooled data disks).
+# sized BEFORE first power-on (vSAN OSA: 1 cache + 1 capacity of distinct sizes).
 # ============================================================================
 
 _esxi_template() { printf '%s' "${STAGE2_DIR}/templates/esxi.template.json"; }

@@ -59,7 +59,7 @@ sample_model2() {
   export DOMAIN=env1.lab.test NATIVE_GW=192.168.100.1 NTP_SERVER=192.168.100.1
   # nested ESXi
   export ESXI_NETMASK=255.255.255.0 ESXI_GW=192.168.100.1 ESXI_ROOT_PASSWORD=labpass
-  export VSAN_MODE=osa ESXI_CACHE_GB=24 ESXI_CAP_GB=400
+  export ESXI_CACHE_GB=24 ESXI_CAP_GB=400
   ESXI_DATA_DISK_GB=(24 400)
   # underlying target (default standalone esxi; tests can flip to vcenter)
   export UNDERLYING_TYPE=esxi UNDERLYING_HOST=10.0.0.5 UNDERLYING_USER=root UNDERLYING_PASSWORD=labpass

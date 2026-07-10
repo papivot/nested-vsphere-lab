@@ -27,8 +27,56 @@ step_vcenter() {
     _run_vcsa_deploy
   fi
 
+  _reconfigure_vcsa_hw
   _wait_vcsa_ready
   ok "vCenter ${VCSA_FQDN} (${VCSA_IP}) is deployed and operational."
+}
+
+# ---------------------------------------------------------------------------
+# Resize the VCSA VM to the desired vCPU/memory (VCSA_CPU / VCSA_MEM_GB).
+# vcsa-deploy always deploys at a fixed deployment_option size, so we adjust
+# afterward. We only ever INCREASE, so try CPU/memory HOT-ADD first (no
+# downtime); if the appliance's VM does not have hot-add enabled, fall back to a
+# graceful power-cycle. Idempotent: a no-op once the VM already matches.
+# ---------------------------------------------------------------------------
+_reconfigure_vcsa_hw() {
+  govc_target underlying
+  local want_mem_mb=$(( VCSA_MEM_GB * 1024 )) info cur_cpu cur_mem_mb
+  info=$(govc vm.info -k -json "${VCSA_DNS_NAME}" 2>/dev/null || true)
+  cur_cpu=$(printf '%s' "$info" | jq -r '.virtualMachines[0].config.hardware.numCPU // empty')
+  cur_mem_mb=$(printf '%s' "$info" | jq -r '.virtualMachines[0].config.hardware.memoryMB // empty')
+  [[ -n "$cur_cpu" && -n "$cur_mem_mb" ]] \
+    || die "Could not read VCSA VM hardware for '${VCSA_DNS_NAME}'"
+
+  if (( cur_cpu == VCSA_CPU && cur_mem_mb == want_mem_mb )); then
+    ok "VCSA already ${VCSA_CPU} vCPU / ${VCSA_MEM_GB} GB."
+    return
+  fi
+  if (( cur_cpu > VCSA_CPU || cur_mem_mb > want_mem_mb )); then
+    warn "VCSA is ${cur_cpu} vCPU / $(( cur_mem_mb / 1024 )) GB, larger than the requested ${VCSA_CPU} vCPU / ${VCSA_MEM_GB} GB; leaving as-is (hot-remove is unsupported)."
+    return
+  fi
+
+  log "Resizing VCSA ${cur_cpu} vCPU / $(( cur_mem_mb / 1024 )) GB -> ${VCSA_CPU} vCPU / ${VCSA_MEM_GB} GB ..."
+  # Hot-add path: VCSA is powered on after firstboot and we only increase.
+  if [[ "$(govc_vm_power_state "${VCSA_DNS_NAME}")" == "poweredOn" ]] \
+     && govc vm.change -k -vm "${VCSA_DNS_NAME}" -c "${VCSA_CPU}" -m "${want_mem_mb}" 2>/dev/null; then
+    ok "VCSA hot-resized to ${VCSA_CPU} vCPU / ${VCSA_MEM_GB} GB (no downtime)."
+    return
+  fi
+
+  warn "Hot-add unavailable on the VCSA VM; power-cycling to resize ..."
+  govc vm.power -k -s=true "${VCSA_DNS_NAME}" 2>/dev/null \
+    || govc vm.power -k -off -force "${VCSA_DNS_NAME}" 2>/dev/null || true
+  local e=0
+  while (( e < 300 )); do
+    [[ "$(govc_vm_power_state "${VCSA_DNS_NAME}")" == "poweredOff" ]] && break
+    sleep 10; (( e += 10 )) || true
+  done
+  govc vm.change -k -vm "${VCSA_DNS_NAME}" -c "${VCSA_CPU}" -m "${want_mem_mb}" \
+    || die "Failed to reconfigure VCSA hardware"
+  govc vm.power -k -on "${VCSA_DNS_NAME}" || die "Failed to power the VCSA back on"
+  ok "VCSA resized to ${VCSA_CPU} vCPU / ${VCSA_MEM_GB} GB (via power-cycle)."
 }
 
 # ---------------------------------------------------------------------------

@@ -17,13 +17,12 @@
 #      hosts are then already compliant, so no remediation/reboot is triggered.
 #   5. Create VDS + portgroups (one per Stage 1 VLAN + edge trunk uplinks)
 #   6. Add hosts to the VDS; enable vSAN + vMotion vmk services; exit maint.
-#   7. Enable vSAN (OSA or ESA) + HA:
-#        - OSA (default; lighter, best for nested): govc cluster.change
-#          -vsan-enabled -ha-enabled + per-host disk group via
-#          `esxcli vsan storage add` (ported from scratch/create-cluster.sh.osa).
-#        - ESA: vim25 SOAP-REST ReconfigureComputeResource_Task with
-#          vsanEsaEnabled (from scratch/create-cluster.sh) + autoclaim.
-#   8. Create the WCP storage tag + policy (mode-independent).
+#   7. Enable vSAN (OSA) + HA: `govc cluster.change -vsan-enabled` plus a
+#      per-host disk group via `esxcli vsan storage add` (cache + capacity,
+#      ported from scratch/create-cluster.sh.osa), then HA via vim25 REST with
+#      das.ignoreRedundantNetWarning. OSA (not ESA) is used deliberately -- it
+#      is far lighter on memory, which suits nested hosts.
+#   8. Create the WCP storage tag + policy.
 # ============================================================================
 
 # ---- pure render fns: vim25 ClusterConfigSpecEx bodies (bats-testable) -----
@@ -31,24 +30,6 @@
 # vLCM draft BaseImageSpec: the desired ESXi base-image version for the cluster.
 _render_base_image_spec() {
   jq -n --arg v "$1" '{ "version": $v }'
-}
-
-_render_vsan_spec() {
-  jq -n '{
-    "_typeName": "ClusterConfigSpecEx",
-    "vsanConfig": { "_typeName": "VsanClusterConfigInfo", "enabled": true }
-  }'
-}
-
-_render_vsan_esa_spec() {
-  jq -n '{
-    "_typeName": "ClusterConfigSpecEx",
-    "vsanConfig": {
-      "_typeName": "VsanClusterConfigInfo",
-      "enabled": true,
-      "vsanEsaEnabled": true
-    }
-  }'
 }
 
 _render_ha_spec() {
@@ -80,7 +61,7 @@ step_cluster() {
   _configure_vsan
   _create_storage_policy
 
-  ok "Nested cluster '${CLUSTER_DC}/${CLUSTER_NAME}' (vSAN ${VSAN_MODE}) is configured."
+  ok "Nested cluster '${CLUSTER_DC}/${CLUSTER_NAME}' (vSAN OSA) is configured."
 }
 
 # 1. Datacenter + cluster + DRS.
@@ -447,42 +428,22 @@ _add_hosts_to_vds() {
   done
 }
 
-# 7. Enable vSAN (OSA or ESA) + HA. Idempotent: skip once the datastore exists.
+# 7. Enable vSAN (OSA) + HA. Idempotent: skip once the datastore exists.
 _configure_vsan() {
   if govc_object_exists "/${CLUSTER_DC}/datastore/${VSAN_DS}"; then
-    ok "vSAN datastore '${VSAN_DS}' already present (mode=${VSAN_MODE}); skipping enable."
+    ok "vSAN datastore '${VSAN_DS}' already present (OSA); skipping enable."
     return
   fi
-  log "Configuring vSAN (${VSAN_MODE}) on '${CLUSTER_NAME}' ..."
-  local cluster_path="/${CLUSTER_DC}/host/${CLUSTER_NAME}" tok moid t
+  log "Configuring vSAN (OSA) on '${CLUSTER_NAME}' ..."
+  local cluster_path="/${CLUSTER_DC}/host/${CLUSTER_NAME}" tok moid t i
   tok=$(vc_session "${VCSA_IP}" "${VCSA_USER}" "${VCSA_SSO_PASSWORD}") \
     || die "Could not create vCenter session"
   moid=$(vc_api GET "${VCSA_IP}" "$tok" "/api/vcenter/cluster" \
     | jq -r --arg n "${CLUSTER_NAME}" '.[] | select(.name == $n) | .cluster' | head -1)
   [[ -n "$moid" ]] || die "Could not resolve cluster MOID for '${CLUSTER_NAME}'"
 
-  case "$VSAN_MODE" in
-    osa) _vsan_osa "$cluster_path" ;;
-    esa) _vsan_esa "$cluster_path" "$tok" "$moid" ;;
-    *)   die "stage2.cluster.vsan.mode must be 'osa' or 'esa' (got '${VSAN_MODE}')" ;;
-  esac
-
-  # Enable HA for BOTH modes with das.ignoreRedundantNetWarning=true so the
-  # "host has no management network redundancy" config issue is suppressed
-  # (nested hosts have a single mgmt uplink). vim25 REST — govc cluster.change
-  # -ha-enabled cannot set the das advanced option.
-  log "Enabling HA (mgmt-network-redundancy warning suppressed) ..."
-  t=$(vc_reconfigure_cluster "${VCSA_IP}" "$tok" "$moid" "$(_render_ha_spec)")
-  [[ -n "$t" ]] && wait_for_task "${VCSA_IP}" "$tok" "$t" || die "HA enable task not created"
-
-  _wait_for_vsan_datastore
-}
-
-# --- OSA: enable vSAN via govc, then build a disk group per host.
-#     Ported from the validated scratch/create-cluster.sh.osa (govc + esxcli;
-#     no vim25 REST). Disks are matched by size (cache vs capacity). ---
-_vsan_osa() {
-  local cluster_path="$1" i
+  # OSA: enable vSAN on the cluster (govc), then build a cache+capacity disk
+  # group per host. Ported from the validated scratch/create-cluster.sh.osa.
   log "Enabling vSAN on cluster (OSA) ..."
   govc cluster.change -k -vsan-enabled "$cluster_path" \
     || die "cluster.change -vsan-enabled failed"
@@ -490,6 +451,16 @@ _vsan_osa() {
     _build_osa_disk_group "${NESXI_FQDN[$i]}"
   done
   ok "vSAN (OSA) enabled on '${CLUSTER_NAME}'."
+
+  # Enable HA with das.ignoreRedundantNetWarning=true so the "host has no
+  # management network redundancy" config issue is suppressed (nested hosts have
+  # a single mgmt uplink). vim25 REST — govc cluster.change -ha-enabled cannot
+  # set the das advanced option.
+  log "Enabling HA (mgmt-network-redundancy warning suppressed) ..."
+  t=$(vc_reconfigure_cluster "${VCSA_IP}" "$tok" "$moid" "$(_render_ha_spec)")
+  [[ -n "$t" ]] && wait_for_task "${VCSA_IP}" "$tok" "$t" || die "HA enable task not created"
+
+  _wait_for_vsan_datastore
 }
 
 # _build_osa_disk_group <host-fqdn>
@@ -534,27 +505,6 @@ _build_osa_disk_group() {
     die "esxcli vsan storage add failed on ${fqdn}. If a disk is still 'in use by vSAN' from a prior deployment, its on-disk vSAN partitions persist -- wipe/redeploy the nested ESXi (rollback esxi + re-run), or clear the disks with partedUtil, then re-run."
   fi
   ok "vSAN OSA disk group created on ${fqdn}."
-}
-
-# --- ESA: enable vSAN + vSAN ESA via vim25 REST (validated
-#     scratch/create-cluster.sh), then autoclaim eligible disks. HA is enabled
-#     by the caller (shared with OSA). ---
-_vsan_esa() {
-  local cluster_path="$1" tok="$2" moid="$3" t i
-
-  log "Enabling vSAN on cluster (MOID ${moid}) ..."
-  t=$(vc_reconfigure_cluster "${VCSA_IP}" "$tok" "$moid" "$(_render_vsan_spec)")
-  [[ -n "$t" ]] && wait_for_task "${VCSA_IP}" "$tok" "$t" || die "vSAN enable task not created"
-
-  log "Enabling vSAN ESA on cluster ..."
-  t=$(vc_reconfigure_cluster "${VCSA_IP}" "$tok" "$moid" "$(_render_vsan_esa_spec)")
-  [[ -n "$t" ]] && wait_for_task "${VCSA_IP}" "$tok" "$t" || die "vSAN ESA enable task not created"
-
-  for ((i=0; i<N_NESXI; i++)); do
-    govc host.storage.info -k -host "${NESXI_FQDN[$i]}" -rescan >/dev/null 2>&1 || true
-  done
-  govc cluster.change -k -vsan-autoclaim "$cluster_path" 2>/dev/null || true
-  ok "vSAN (ESA) enabled on '${CLUSTER_NAME}'."
 }
 
 _wait_for_vsan_datastore() {

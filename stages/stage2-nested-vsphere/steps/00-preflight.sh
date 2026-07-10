@@ -114,7 +114,7 @@ step_preflight() {
   fi
 
   # ---- Underlying ESXi: free disk space estimate ----
-  # Each nested ESXi VM ≈ boot + ESA data disks (thin); VCSA ≈ 150 GB thin.
+  # Each nested ESXi VM ≈ boot + vSAN data disks (thin); VCSA ≈ 150 GB thin.
   local vcsa_gb total_gb
   vcsa_gb=150
   total_gb=$(( vcsa_gb + N_NESXI * ESXI_DISK_TOTAL_GB ))

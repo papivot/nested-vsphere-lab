@@ -106,8 +106,8 @@ If a needed secret is blank, `run.sh` prompts for it (no echo).
 |---|---|
 | `preflight` | Assert Stage 1 is healthy (CA bundle, DNS resolves the planned ESXi/VCSA names, registry `/v2/` up), the underlying target is reachable with the datastore + trunk portgroup, the OVA/ISO are present under `artifacts.dir`, capacity fits, and `≥3` nested ESXi records exist. |
 | `esxi` | Deploy N nested-ESXi VMs from the OVA (committed `esxi.template.json` via envsubst; guestinfo injected via `vm.change -e`), size CPU/mem, enable nested-HV + disk UUIDs, and attach the vSAN data disks before first power-on. |
-| `vcenter` | Deploy the VCSA with the supported `vcsa-deploy` CLI from the mounted installer ISO, then wait for the appliance + vCenter APIs to come up. |
-| `cluster` | Create the datacenter + cluster (DRS), add the nested hosts, build the VDS + per-VLAN portgroups + edge trunk uplinks, enable **vSAN + HA**, and create the WCP storage tag/policy. |
+| `vcenter` | Deploy the VCSA with the supported `vcsa-deploy` CLI from the mounted installer ISO, resize the VCSA VM to the configured vCPU/RAM (hot-add if supported, else a graceful power-cycle), then wait for the appliance + vCenter APIs to come up. |
+| `cluster` | Create the datacenter + cluster (DRS); **seed the vLCM depot from a nested host** and set the cluster's desired image to the build the hosts run (fresh vCenter ships only older bundled images — Supervisor requires an image-compliant cluster); add the nested hosts; build the VDS + per-VLAN portgroups + edge trunk uplinks; enable **vSAN (OSA) + HA**; create the WCP storage tag/policy. |
 | `supervisor` | Resolve the mgmt/workload networks, create a content library, and enable **Supervisor** with the Foundation Load Balancer (validated payload from `templates/enable_flb.json.tmpl`), then wait for `RUNNING`. |
 | `labinfo` | Render `/etc/nested-lab/lab2-info.txt` access sheet (vCenter URL/creds, ESXi hosts, cluster, Supervisor, `kubectl vsphere login`). |
 
@@ -115,8 +115,34 @@ If a needed secret is blank, `run.sh` prompts for it (no echo).
 
 - **Names/IPs reuse Stage 1:** nested ESXi are derived from `dns.records` matching `stage2.esxi.dns_prefix`; the VCSA IP/FQDN come from its `dns.records` entry; VLANs are referenced by `network.vlans[].name`. Stage 2 does not redefine IPs.
 - **Underlying target** (`stage2.underlying.type`): `esxi` (standalone host) or `vcenter` (existing vCenter — also set `.datacenter` and `.cluster`). The VCSA deploy template and govc placement are selected automatically.
-- **vSAN mode** (`stage2.cluster.vsan.mode`): **`osa`** (default; lighter, recommended for nested — needs a distinct `vsan_cache` + `vsan_capacity` disk) or **`esa`** (memory-intensive; pooled `vsan_data` disks).
-- **Supervisor networking** (`stage2.supervisor.ranges`): explicit control-plane, FLB management/frontend, workload-node and VIP ranges — must sit outside the DHCP pool, and the VIP range must be routed to the workload network (see `routing.static_routes`).
+- **VCSA sizing** (`stage2.vcsa`): `size` is the `vcsa-deploy` deployment_option (`tiny`…`large`); the VCSA VM is then resized to `cpu` / `mem_gb` (default **6 vCPU / 26 GB**) via hot-add, falling back to a power-cycle. Only ever increased.
+- **vSAN (OSA)** (`stage2.cluster.vsan`): an OSA disk group per host — needs one distinct **`vsan_cache`** + one **`vsan_capacity`** disk under `stage2.esxi.disks` (matched by size at claim time). OSA is used deliberately: far lighter on memory than ESA, which suits nested hosts.
+- **Supervisor networking** (`stage2.supervisor.ranges`): explicit control-plane, FLB management/frontend, workload-node and VIP ranges — must sit outside the DHCP pool, and the VIP range must sit inside the workload/frontend subnet (the Foundation LB requires it).
+
+## Accessing the lab from your workstation (SSH SOCKS proxy)
+
+The nested vCenter, ESXi hosts and Supervisor live on the private VLANs behind the jumpbox and have **no route from your laptop**. Tunnel through the jumpbox with an SSH SOCKS proxy, and — crucially — send **DNS through the tunnel too**, so `*.<domain>` resolves via the jumpbox's BIND (Stage 1's `dns.use_local_resolver: true` makes the jumpbox resolve the lab names + reverse zones).
+
+1. **Open the tunnel** (leave it running in a terminal):
+   ```bash
+   ssh -N -D 5555 <user>@<jumpbox-public-ip>
+   ```
+   `-D 5555` opens a local **SOCKS5** proxy on `127.0.0.1:5555`; `-N` runs no remote shell.
+
+2. **Point the browser at the proxy and resolve DNS remotely** (over the SOCKS5 connection), so lab names resolve on the jumpbox rather than on your laptop:
+   - **Firefox** (recommended — proxy is per-app, no OS changes):
+     Settings → **Network Settings** → **Manual proxy configuration** →
+     **SOCKS Host** `127.0.0.1`, **Port** `5555`, select **SOCKS v5**, and tick
+     **“Proxy DNS when using SOCKS v5.”** Then turn **DNS over HTTPS OFF**
+     (Settings → Privacy & Security → DNS over HTTPS → *Off*) — DoH bypasses the
+     SOCKS DNS and the lab names won't resolve.
+   - **Chrome/Edge**: launch with `--proxy-server="socks5://127.0.0.1:5555"`.
+     The `socks5://` scheme (not `socks5h`-vs-`socks5` in curl terms) makes
+     Chromium send DNS through the proxy by default.
+
+3. **Browse the lab:** `https://vcsa.<domain>/ui` (log in as `administrator@<sso_domain>`), the ESXi hosts, or the Supervisor control-plane/VIP. Trust the lab **CA** (from Stage 1, under `certs.dir`) to avoid TLS warnings. The `kubectl vsphere login` line for the Supervisor is printed in `/etc/nested-lab/lab2-info.txt` (`labinfo` step).
+
+> Why the DNS toggle matters: without “remote DNS”, the browser resolves names **locally** (where `*.<domain>` doesn't exist) and only the *IP* traffic is tunnelled — so name-based access fails. Sending DNS over SOCKS5 is what makes `vcsa.<domain>` resolve through the jumpbox.
 
 ## Tests
 
@@ -133,6 +159,6 @@ bats tests/bats/syntax.bats      # bash -n on every script (+ shellcheck if inst
 
 Each step is split into a pure **render** function (testable) and an **apply** path (side effects). The `step_*.bats` files stub the YAML layer and assert on the rendered config — e.g. `step_dns` checks the zone files and recursion ACL, `step_dhcp` validates the Kea JSON (last-/26 pool, option 26 = MTU 9000, FQDN NTP dropped, per-VLAN reservations), `step_certs` runs a real openssl CA→leaf→`openssl verify` round-trip, `step_routing` checks the nftables masquerade/forward rules.
 
-Stage 2's render tests cover the JSON its steps emit: `step_esxi` (import options + guestinfo), `step_vcenter` (both `vcsa-deploy` template variants — standalone-ESXi and existing-vCenter targets), `step_cluster` (the vim25 vSAN/HA reconfigure specs), and `step_supervisor` (the Foundation-LB enable payload — host addresses not CIDRs, workload networks wired). `structure.bats` also asserts the Stage 2 steps, rollbacks and templates are present.
+Stage 2's render tests cover the JSON its steps emit: `step_esxi` (import options + guestinfo), `step_vcenter` (both `vcsa-deploy` template variants — standalone-ESXi and existing-vCenter targets), `step_cluster` (the vim25 HA reconfigure spec + the vLCM base-image spec), and `step_supervisor` (the Foundation-LB enable payload — host addresses not CIDRs, workload networks wired). `structure.bats` also asserts the Stage 2 steps, rollbacks and templates are present.
 
 `--verify` asserts the live system. Stage 1: jumbo MTU, gateway IPs, IP forwarding + masquerade, egress, forward/reverse DNS, core services running, Kea validity + option 26, CA verifies the registry leaf, registry `/v2/` health, and a docker push/pull round-trip. Stage 2 (`./run.sh --stage 2 --verify`): nested ESXi VMs up and API-responsive, VCSA reachable, the cluster has all hosts, the vSAN datastore is visible, and Supervisor reports `RUNNING`.

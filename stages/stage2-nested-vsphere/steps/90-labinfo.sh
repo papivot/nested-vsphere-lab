@@ -33,7 +33,7 @@ _lab2info_render() {
   echo "  Datacenter : ${CLUSTER_DC}"
   echo "  Cluster    : ${CLUSTER_NAME}"
   echo "  VDS        : ${VDS_NAME}"
-  echo "  vSAN       : ${VSAN_DS}  (mode=${VSAN_MODE}, FTT=${VSAN_FTT})"
+  echo "  vSAN       : ${VSAN_DS}  (OSA, FTT=${VSAN_FTT})"
   echo ""
   echo "SUPERVISOR / WORKLOAD MANAGEMENT"
   echo "  Profile          : ${S2_PROFILE} (Foundation Load Balancer)"

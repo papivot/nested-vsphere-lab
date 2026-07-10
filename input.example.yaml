@@ -111,25 +111,24 @@ stage2:
     dns_prefix: esxi             # matches esxi01/02/03 in dns.records; derives count + IPs + FQDNs
     cpu: 8
     mem_gb: 48
-    # disk[0] = boot. Data disks depend on cluster.vsan.mode below:
-    #   OSA (default): exactly one 'vsan_cache' + one 'vsan_capacity' disk, of
-    #                  DISTINCT sizes (matched by size at claim time).
-    #   ESA:           one or more 'vsan_data' disks (all pooled; no cache).
+    # disk[0] = boot. vSAN OSA needs exactly one 'vsan_cache' + one
+    # 'vsan_capacity' disk, of DISTINCT sizes (matched by size at claim time).
     disks:
       - { size_gb: 32,  label: boot }
       - { size_gb: 24,  label: vsan_cache }      # OSA cache tier
-      - { size_gb: 400, label: vsan_capacity }   # OSA / ESA data tier
-    # For ESA instead, use e.g.:
-    #   - { size_gb: 32,  label: boot }
-    #   - { size_gb: 400, label: vsan_data }
-    #   - { size_gb: 400, label: vsan_data }
+      - { size_gb: 400, label: vsan_capacity }   # OSA capacity tier
 
   vcsa:
     iso: VMware-VCSA-all-9.0.0.0.iso   # VCSA installer ISO under artifacts.dir
     iso_mount: /mnt/vcsa-iso           # where the ISO is mounted for vcsa-deploy
     dns_name: vcsa               # looked up in dns.records; derives IP + FQDN
     sso_domain: vsphere.local
-    size: tiny                   # tiny | small | medium | large
+    size: tiny                   # deployment_option: tiny | small | medium | large
+    # vcsa-deploy always deploys+powers-on at the size above; the VCSA VM is then
+    # resized to cpu/mem_gb (hot-add if supported, else a graceful power-cycle).
+    # Only ever increased — set cpu/mem_gb >= the deployment size's defaults.
+    cpu: 6                       # vCPUs for the VCSA VM
+    mem_gb: 26                   # GiB RAM for the VCSA VM
 
   cluster:
     name: nested-cluster
@@ -137,8 +136,7 @@ stage2:
     vds_name: nested-vds
     vds_version: 9.0.0           # VDS product version
     uplink_pnic: vmnic1          # nested ESXi pNIC used as the VDS uplink (vmnic0 stays mgmt)
-    vsan:
-      mode: osa                  # osa (default; lighter, recommended for nested) | esa (memory-intensive)
+    vsan:                        # vSAN OSA (cache + capacity disk group per host)
       ftt: 1                     # FTT=1 RAID-1 (minimum for 3 hosts)
       datastore_name: vsanDatastore
 
