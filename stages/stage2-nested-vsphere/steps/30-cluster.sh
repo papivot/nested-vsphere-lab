@@ -165,12 +165,21 @@ _seed_depot_from_host() {
     "$enable_url" -d '{}' 2>/dev/null || true)
   enable_code="${enable_resp##*$'\n'}"
   enable_body="${enable_resp%$'\n'*}"
+  # Fail fast on a routing/validation error (e.g. HTTP 404 = wrong endpoint on
+  # this build) instead of polling the depot pointlessly for 10 minutes. Only a
+  # 2xx (task accepted) proceeds to the async depot poll.
   case "$enable_code" in
     2*) log "Single-image enablement task accepted (HTTP ${enable_code}); extraction runs asynchronously." ;;
-    *)  warn "Host enablement returned HTTP ${enable_code:-none}: ${enable_body:-<none>}" ;;
+    *)  die "Host single-image enablement failed (HTTP ${enable_code:-none}: ${enable_body:-<none>}).
+  Seed the depot by hand instead (proven path) — '${seed_fqdn}' is already added
+  as a standalone host:
+    vCenter UI -> Hosts and Clusters -> select ${seed_fqdn} -> Updates -> Image
+      -> Manage with a single image -> 'Extract the image on the host' -> Save.
+  Then re-run:  sudo ./run.sh --stage 2 --from-step cluster
+  (Idempotent: it detects the seeded depot and continues.)" ;;
   esac
 
-  # Poll the depot -- extraction is asynchronous. Depot state is the real gate.
+  # Enablement accepted -> poll the depot (extraction is asynchronous).
   local elapsed=0 max=600
   while (( elapsed < max )); do
     [[ -n "$(_depot_version_for_build "$tok" "$build")" ]] && break
@@ -178,14 +187,11 @@ _seed_depot_from_host() {
     log "  waiting for the host image to extract into the depot (${elapsed}/${max}s) ..."
   done
   if [[ -z "$(_depot_version_for_build "$tok" "$build")" ]]; then
-    die "The vCenter depot never received a base image for build ${build}.
-  Host-seed extraction did not populate the depot (last enablement HTTP ${enable_code:-none}: ${enable_body:-<none>}).
-  '${seed_fqdn}' is already added as a standalone host, so you can seed it by hand:
-    vCenter UI -> Hosts and Clusters -> select ${seed_fqdn} -> Updates -> Image
-      -> Manage with a single image -> 'Extract the image on the host' -> Save.
-  Then re-run:  sudo ./run.sh --stage 2 --from-step cluster
-  If the UI extraction also fails, confirm the nested ESXi has a persistent
-  ESX-OSData volume on a dedicated disk (not ramdisk)."
+    die "Single-image management enabled on ${seed_fqdn}, but no base image for
+  build ${build} appeared in the depot within ${max}s. Confirm the nested ESXi
+  has a persistent ESX-OSData volume on a dedicated disk (not ramdisk), or seed
+  by hand (${seed_fqdn} -> Updates -> Image -> Manage with a single image ->
+  'Extract the image on the host'), then re-run --from-step cluster."
   fi
   ok "Depot seeded with the nested ESXi image (build ${build})."
 
