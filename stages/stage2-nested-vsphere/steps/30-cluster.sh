@@ -98,32 +98,33 @@ _depot_version_for_build() {
         2>/dev/null || true
 }
 
-# 2. Seed the vCenter vLCM depot with the image the nested hosts run ("host
-#    seed"). A fresh vCenter ships only older bundled base images, so the 9.x
-#    nested build is absent from the depot -- and neither the cluster image nor
-#    Supervisor can be made compliant without it. The offline fix: add the first
-#    ESXi as a STANDALONE host, enable host-level image management (which runs
-#    the host-seed extraction, importing its running image into the depot), then
-#    remove it. The remaining hosts join the cluster normally; depot content
-#    persists independent of the host.
+# 2. Ensure the vCenter vLCM depot contains the image the nested hosts run.
+#    A fresh 9.x vCenter bundles only OLDER fallback base images (e.g. 8.0U3),
+#    so the nested 9.x build is absent from the depot -- and the cluster image
+#    (hence Supervisor) cannot be made compliant without it.
 #
-#    Requires the nested ESXi to have a persistent ESX-OSData volume (the OVA's
-#    boot disk provides it); otherwise extraction fails with "No OSData storage
-#    partition is available to extract image".
+#    There is no reliable REST path to extract a host's *running* image into the
+#    depot: `govc host.add` auto-enables single-image management with the bundled
+#    (older) base image, and a host software draft merely inherits that desired
+#    image -- neither captures the installed build. Only the Add-Host wizard's
+#    "Extract the image on the host" does (it also requires a persistent
+#    ESX-OSData volume on a dedicated disk). So this step VERIFIES the depot and,
+#    if the build is missing, stops with that one proven manual instruction.
 #
-#    Idempotent: if the depot already has a base image matching the host build
-#    (a re-run, or an already-seeded vCenter), the whole step is a no-op.
+#    Idempotent: once the depot has the build (a re-run after the manual seed, or
+#    an already-seeded vCenter), the step is a no-op and the run continues.
 _seed_depot_from_host() {
   local seed_fqdn="${NESXI_FQDN[0]}"
   local tok
   tok=$(vc_session "${VCSA_IP}" "${VCSA_USER}" "${VCSA_SSO_PASSWORD}") \
     || die "Could not create vCenter session"
 
-  # Add the seed host standalone (idempotent) so we can read its build + extract.
+  # Add the seed host standalone (idempotent) only to read its exact build and
+  # verify the depot. (We do NOT rely on it to extract -- see the header.)
   if govc find -k "/${CLUSTER_DC}/host" -type h -name "${seed_fqdn}" 2>/dev/null | grep -q .; then
     ok "Seed host '${seed_fqdn}' already present in inventory."
   else
-    log "Adding '${seed_fqdn}' as a standalone host (for image extraction) ..."
+    log "Adding '${seed_fqdn}' as a standalone host (to read its build) ..."
     govc host.add -k -hostname "${seed_fqdn}" -username root \
       -password "${ESXI_ROOT_PASSWORD}" -noverify -force \
       || die "Could not add standalone seed host ${seed_fqdn}"
@@ -137,65 +138,28 @@ _seed_depot_from_host() {
   build=$(govc object.collect -k -s "${host_path}" config.product.build 2>/dev/null || true)
   [[ -n "$build" ]] || die "Could not read ESXi build from seed host ${seed_fqdn}"
 
-  # Already seeded? Then remove the standalone host and return (idempotent).
+  # Depot already has the running build? Then we are seeded -- remove the probe
+  # host (it rejoins via the cluster later) and continue. Covers re-runs after a
+  # manual seed and vCenters that already carry the image.
   if [[ -n "$(_depot_version_for_build "$tok" "$build")" ]]; then
-    ok "Depot already has a base image for build ${build}; skipping extraction."
+    ok "Depot has a base image for build ${build}; continuing."
     _remove_standalone_host "$host_path" "$seed_fqdn"
     return
   fi
 
-  # Host MOID (e.g. host-16) for the esx/settings API.
-  local moid
-  moid=$(govc find -k -i "/${CLUSTER_DC}/host" -type h -name "${seed_fqdn}" 2>/dev/null | head -1)
-  moid="${moid##*:}"
-  [[ -n "$moid" ]] || die "Could not resolve MOID for seed host ${seed_fqdn}"
-
-  log "Transitioning ${seed_fqdn} to vLCM single-image management (extracts its image into the depot) ..."
-  # The image extraction ("host seed") is a side effect of ENABLING single-image
-  # management on the standalone host -- NOT a plain draft commit, and NOT a
-  # side effect of a bare host add (govc host.add adds a plain host). This is the
-  # API the add-host wizard's "Extract the image on the host" runs server-side:
-  #   com.vmware.esx.settings.hosts.enablement.Software.enable  ->
-  #   POST /api/esx/settings/hosts/{host}/enablement/software?action=enable
-  # Enabling imports the host's base image + components into the vCenter depot.
-  local enable_url="https://${VCSA_IP}/api/esx/settings/hosts/${moid}/enablement/software?action=enable&vmw-task=true"
-  local enable_resp enable_code enable_body
-  enable_resp=$(curl -sk -w $'\n%{http_code}' -X POST \
-    -H "vmware-api-session-id: ${tok}" -H "Content-Type: application/json" \
-    "$enable_url" -d '{}' 2>/dev/null || true)
-  enable_code="${enable_resp##*$'\n'}"
-  enable_body="${enable_resp%$'\n'*}"
-  # Fail fast on a routing/validation error (e.g. HTTP 404 = wrong endpoint on
-  # this build) instead of polling the depot pointlessly for 10 minutes. Only a
-  # 2xx (task accepted) proceeds to the async depot poll.
-  case "$enable_code" in
-    2*) log "Single-image enablement task accepted (HTTP ${enable_code}); extraction runs asynchronously." ;;
-    *)  die "Host single-image enablement failed (HTTP ${enable_code:-none}: ${enable_body:-<none>}).
-  Seed the depot by hand instead (proven path) — '${seed_fqdn}' is already added
-  as a standalone host:
-    vCenter UI -> Hosts and Clusters -> select ${seed_fqdn} -> Updates -> Image
-      -> Manage with a single image -> 'Extract the image on the host' -> Save.
-  Then re-run:  sudo ./run.sh --stage 2 --from-step cluster
-  (Idempotent: it detects the seeded depot and continues.)" ;;
-  esac
-
-  # Enablement accepted -> poll the depot (extraction is asynchronous).
-  local elapsed=0 max=600
-  while (( elapsed < max )); do
-    [[ -n "$(_depot_version_for_build "$tok" "$build")" ]] && break
-    sleep 15; (( elapsed += 15 )) || true
-    log "  waiting for the host image to extract into the depot (${elapsed}/${max}s) ..."
-  done
-  if [[ -z "$(_depot_version_for_build "$tok" "$build")" ]]; then
-    die "Single-image management enabled on ${seed_fqdn}, but no base image for
-  build ${build} appeared in the depot within ${max}s. Confirm the nested ESXi
-  has a persistent ESX-OSData volume on a dedicated disk (not ramdisk), or seed
-  by hand (${seed_fqdn} -> Updates -> Image -> Manage with a single image ->
-  'Extract the image on the host'), then re-run --from-step cluster."
-  fi
-  ok "Depot seeded with the nested ESXi image (build ${build})."
-
+  # Missing: remove the probe host so it is free to be re-added through the
+  # wizard, then stop with the one proven manual step.
   _remove_standalone_host "$host_path" "$seed_fqdn"
+  die "The vCenter depot has no ESXi base image for build ${build}. A fresh 9.x
+  vCenter bundles only older fallback images, and the only path that extracts a
+  host's *running* image into the depot is the Add-Host wizard. Seed it once:
+    vCenter UI -> right-click datacenter '${CLUSTER_DC}' -> Add Host ->
+      '${seed_fqdn}'  (user: root) -> accept the thumbprint -> at the image step
+      choose 'Extract the image on the host' -> finish.
+  Then re-run:  sudo ./run.sh --stage 2 --from-step cluster
+  (Idempotent: it detects the seeded depot and continues. The nested ESXi must
+  have a persistent ESX-OSData volume on a dedicated disk for the extract to
+  succeed.)"
 }
 
 # _remove_standalone_host <host-path> <fqdn>

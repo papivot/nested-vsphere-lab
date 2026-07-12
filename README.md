@@ -107,7 +107,7 @@ If a needed secret is blank, `run.sh` prompts for it (no echo).
 | `preflight` | Assert Stage 1 is healthy (CA bundle, DNS resolves the planned ESXi/VCSA names, registry `/v2/` up), the underlying target is reachable with the datastore + trunk portgroup, the OVA/ISO are present under `artifacts.dir`, capacity fits, and `≥3` nested ESXi records exist. |
 | `esxi` | Deploy N nested-ESXi VMs from the OVA (committed `esxi.template.json` via envsubst; guestinfo injected via `vm.change -e`), size CPU/mem, enable nested-HV + disk UUIDs, and attach the vSAN data disks before first power-on. |
 | `vcenter` | Deploy the VCSA with the supported `vcsa-deploy` CLI from the mounted installer ISO, resize the VCSA VM to the configured vCPU/RAM (hot-add if supported, else a graceful power-cycle), then wait for the appliance + vCenter APIs to come up. |
-| `cluster` | Create the datacenter + cluster (DRS); **seed the vLCM depot from a nested host** and set the cluster's desired image to the build the hosts run (fresh vCenter ships only older bundled images — Supervisor requires an image-compliant cluster); add the nested hosts; build the VDS + per-VLAN portgroups + edge trunk uplinks; enable **vSAN (OSA) + HA**; create the WCP storage tag/policy. |
+| `cluster` | Create the datacenter + cluster (DRS); **verify the vLCM depot has the nested ESXi build** (see the one-time image-seed note below) and set the cluster's desired image to it so Supervisor sees an image-compliant cluster; add the nested hosts; build the VDS + per-VLAN portgroups + edge trunk uplinks; enable **vSAN (OSA) + HA**; create the WCP storage tag/policy. |
 | `supervisor` | Resolve the mgmt/workload networks, create a content library, and enable **Supervisor** with the Foundation Load Balancer (validated payload from `templates/enable_flb.json.tmpl`), then wait for `RUNNING`. |
 | `labinfo` | Render `/etc/nested-lab/lab2-info.txt` access sheet (vCenter URL/creds, ESXi hosts, cluster, Supervisor, `kubectl vsphere login`). |
 
@@ -118,6 +118,12 @@ If a needed secret is blank, `run.sh` prompts for it (no echo).
 - **VCSA sizing** (`stage2.vcsa`): `size` is the `vcsa-deploy` deployment_option (`tiny`…`large`); the VCSA VM is then resized to `cpu` / `mem_gb` (default **6 vCPU / 26 GB**) via hot-add, falling back to a power-cycle. Only ever increased.
 - **vSAN (OSA)** (`stage2.cluster.vsan`): an OSA disk group per host — needs one distinct **`vsan_cache`** + one **`vsan_capacity`** disk under `stage2.esxi.disks` (matched by size at claim time). OSA is used deliberately: far lighter on memory than ESA, which suits nested hosts.
 - **Supervisor networking** (`stage2.supervisor.ranges`): explicit control-plane, FLB management/frontend, workload-node and VIP ranges — must sit outside the DHCP pool, and the VIP range must sit inside the workload/frontend subnet (the Foundation LB requires it).
+
+#### One-time depot image seed (fresh vCenter)
+
+A freshly deployed vSphere 9.x vCenter carries only **older fallback** ESXi base images in its vLCM depot — not the build your nested ESXi run. The cluster (and therefore Supervisor) can only be made image-compliant once that build is in the depot, and the **only** way to get a host's *running* image into the depot offline is the vCenter UI: **right-click the datacenter → Add Host → pick a nested ESXi → at the image step choose "Extract the image on the host."** (Requires the nested ESXi to have a persistent ESX-OSData volume on a dedicated disk.)
+
+The `cluster` step detects a missing image and stops with this exact instruction; after you seed it once, re-run `--from-step cluster` and the run continues unattended. There is no supported REST API that extracts a host's installed image into the depot, so this remains a single manual click; everything else in Stage 2 is automated.
 
 ## Accessing the lab from your workstation (SSH SOCKS proxy)
 
