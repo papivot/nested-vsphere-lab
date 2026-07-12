@@ -52,21 +52,25 @@ STAGE 1 — jumpbox: router/NAT, VLANs, BIND DNS, Kea DHCP, root CA, OCI registr
     ./run.sh --stage 1 --verify
 
 STAGE 2 — nested vSphere: ESXi + vCenter (VCSA) + Supervisor (vSphere Foundation LB)
-  steps: preflight esxi vcenter cluster supervisor labinfo
+  steps: preflight esxi vcenter imageseed cluster supervisor labinfo
     preflight   Stage-1 health (CA/DNS/registry), underlying target reachable,
                 OVA/ISO present under artifacts.dir, capacity, >=3 ESXi records.
     esxi        Deploy N nested ESXi from the OVA; size CPU/mem + vSAN disks;
                 enable nested-HV; power on.
     vcenter     Deploy VCSA via vcsa-deploy; resize the VM to vcsa.cpu/mem_gb
                 (hot-add, else power-cycle); wait for the APIs.
-    cluster     Datacenter + cluster (DRS); seed the vLCM depot from a host and
-                align the cluster image; add hosts; VDS + portgroups; vSAN (OSA)
-                + HA; WCP storage policy.
+    imageseed   ONE-TIME MANUAL GATE: a fresh 9.x vCenter lacks the nested ESXi
+                build in its vLCM depot. Prompts you to Add the first ESXi in
+                the UI with "Extract the image on the host", then verifies the
+                depot before letting cluster proceed. Idempotent; no rollback.
+    cluster     Datacenter + cluster (DRS); add hosts; align the cluster image
+                to the seeded build; VDS + portgroups; vSAN (OSA) + HA; WCP
+                storage policy.
     supervisor  Content library; enable Supervisor with the Foundation LB;
                 wait for RUNNING.
     labinfo     Write the access sheet (/etc/nested-lab/lab2-info.txt).
     ./run.sh --stage 2
-    ./run.sh --stage 2 --from-step cluster
+    ./run.sh --stage 2 --from-step imageseed
     ./run.sh --stage 2 --rollback esxi
     ./run.sh --stage 2 --verify
 

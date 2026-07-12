@@ -179,3 +179,19 @@ vc_reconfigure_cluster() {
     -H "Content-Type: application/json" \
     -d "$body" 2>/dev/null | jq -r '.value // empty'
 }
+
+# ---------------------------------------------------------------------------
+# depot_base_image_for_build <vc-host> <token> <build>
+# Print the vLCM depot base-image version whose build matches <build> (depot
+# version strings end in ".<build>", e.g. "9.1.0.0.25370933"). Empty if the
+# depot has no matching base image. Soft (never dies) so callers can use it both
+# as a gate and a poll predicate. Used by the imageseed gate + the cluster
+# image-align.
+# ---------------------------------------------------------------------------
+depot_base_image_for_build() {
+  curl -sk -H "vmware-api-session-id: ${2}" \
+    "https://${1}/api/esx/settings/depot-content/base-images" 2>/dev/null \
+    | jq -r --arg b ".${3}" \
+        '[.[] | select(.version | endswith($b))] | first | .version // empty' \
+        2>/dev/null || true
+}
