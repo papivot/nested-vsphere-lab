@@ -30,13 +30,13 @@ ROOT="${BATS_TEST_DIRNAME}/../.."
 }
 
 @test "all stage-2 steps present" {
-  for s in 00-preflight 10-esxi 20-vcenter 25-imageseed 30-cluster 40-supervisor 90-labinfo; do
+  for s in 00-preflight 10-esxi 20-vcenter 25-imageseed 30-cluster 35-vsanhealth 40-supervisor 90-labinfo; do
     [ -f "${ROOT}/stages/stage2-nested-vsphere/steps/${s}.sh" ]
   done
 }
 
 @test "stage-2 rollbacks present for every mutating step" {
-  for s in 10-esxi 20-vcenter 25-imageseed 30-cluster 40-supervisor; do
+  for s in 10-esxi 20-vcenter 25-imageseed 30-cluster 35-vsanhealth 40-supervisor; do
     [ -f "${ROOT}/stages/stage2-nested-vsphere/rollback/${s}.sh" ]
   done
 }

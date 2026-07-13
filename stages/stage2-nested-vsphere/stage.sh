@@ -7,7 +7,7 @@
 STAGE2_DIR="${STAGE_DIR}"   # stages/stage2-nested-vsphere
 
 # Ordered steps. preflight is always a hard gate.
-STEPS=(preflight esxi vcenter imageseed cluster supervisor labinfo)
+STEPS=(preflight esxi vcenter imageseed cluster vsanhealth supervisor labinfo)
 
 # ---- shared state paths ----
 LAB_STATE_DIR=/etc/nested-lab

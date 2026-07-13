@@ -195,3 +195,53 @@ depot_base_image_for_build() {
         '[.[] | select(.version | endswith($b))] | first | .version // empty' \
         2>/dev/null || true
 }
+
+# ---------------------------------------------------------------------------
+# vcsa_rvc <rvc-command> [<rvc-command> ...]
+# Run one or more RVC (Ruby vSphere Console) commands non-interactively on the
+# VCSA appliance over SSH as root, then print RVC's stdout+stderr.
+#
+# vSAN health silencing and the Performance Service have no REST/vim25 binding
+# (they live on the legacy vsanHealth SOAP service); RVC -- bundled on every
+# VCSA -- is the supported, documented way to drive them (validated live
+# against a 9.1 VCSA before this was written; see steps/35-vsanhealth.sh).
+#
+# root's password is the same secret as VCSA_SSO_PASSWORD (the vcsa-deploy
+# templates set both ssh_enable:true and the appliance root password from it).
+# A fresh VCSA's SSH login shell is the restricted `appliancesh`, which cannot
+# run rvc directly, so every call unconditionally sends the `shell.set`/`shell`
+# appliancesh commands (harmless "command not found" if the shell is already
+# bash) followed by `chsh -s /bin/bash root`, which permanently makes bash the
+# default login shell -- so this bootstrap dance only ever really happens once.
+#
+# RVC's own exit code is not a reliable success signal for every subcommand;
+# callers must re-verify live state (e.g. via vcsa_rvc_health_summary) rather
+# than trust this function's exit code alone.
+# ---------------------------------------------------------------------------
+vcsa_rvc() {
+  local rvc_args="" c
+  for c in "$@"; do rvc_args+="-c $(printf '%q' "$c") "; done
+  rvc_args+="-c quit $(printf '%q' "administrator@${VCSA_SSO_DOMAIN}:${VCSA_SSO_PASSWORD}@localhost")"
+
+  command -v sshpass >/dev/null 2>&1 || die "sshpass not found. Run ./bootstrap.sh first."
+
+  sshpass -p "${VCSA_SSO_PASSWORD}" ssh -tt \
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 \
+    "root@${VCSA_IP}" <<RVCSCRIPT 2>&1
+shell.set --enabled true
+shell
+chsh -s /bin/bash root
+rvc ${rvc_args}
+exit
+RVCSCRIPT
+}
+
+# ---------------------------------------------------------------------------
+# vcsa_rvc_cluster_path
+# The RVC inventory path for the Stage 2 cluster, e.g.
+# "localhost/nested-dc/computers/nested-cluster" ("localhost" is the fixed
+# connection alias used by vcsa_rvc; requires CLUSTER_DC/CLUSTER_NAME exported).
+# ---------------------------------------------------------------------------
+vcsa_rvc_cluster_path() {
+  printf 'localhost/%s/computers/%s' "${CLUSTER_DC}" "${CLUSTER_NAME}"
+}

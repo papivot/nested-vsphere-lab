@@ -38,12 +38,16 @@ case "$FAMILY" in
   *)      GETTEXT_PKG=gettext ;;
 esac
 
-log "Installing base utilities (jq, curl, openssl, ca-certificates, tar, gzip, ${GETTEXT_PKG})"
-install_pkgs jq curl openssl ca-certificates tar gzip "$GETTEXT_PKG" || true
+log "Installing base utilities (jq, curl, openssl, ca-certificates, tar, gzip, sshpass, ${GETTEXT_PKG})"
+install_pkgs jq curl openssl ca-certificates tar gzip sshpass "$GETTEXT_PKG" || true
 
 # envsubst is required by Stage 2 (dig is provided by Stage 1's bind packages;
 # mount/awk ship with the base OS). Warn early if envsubst is still missing.
 command -v envsubst >/dev/null 2>&1 || log "WARNING: envsubst not found after install; Stage 2 template rendering needs it (install '${GETTEXT_PKG}')."
+
+# sshpass drives the VCSA over SSH (RVC) for the Stage 2 vSAN health-remediation
+# step (silencing nested-only HCL findings + enabling the Performance Service).
+command -v sshpass >/dev/null 2>&1 || log "WARNING: sshpass not found after install; Stage 2's vsanhealth step needs it."
 
 # ---- yq (mikefarah) ----
 if command -v yq >/dev/null 2>&1 && yq --version 2>/dev/null | grep -qiE 'mikefarah|version v?4'; then

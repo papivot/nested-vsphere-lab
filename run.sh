@@ -52,7 +52,7 @@ STAGE 1 — jumpbox: router/NAT, VLANs, BIND DNS, Kea DHCP, root CA, OCI registr
     ./run.sh --stage 1 --verify
 
 STAGE 2 — nested vSphere: ESXi + vCenter (VCSA) + Supervisor (vSphere Foundation LB)
-  steps: preflight esxi vcenter imageseed cluster supervisor labinfo
+  steps: preflight esxi vcenter imageseed cluster vsanhealth supervisor labinfo
     preflight   Stage-1 health (CA/DNS/registry), underlying target reachable,
                 OVA/ISO present under artifacts.dir, capacity, >=3 ESXi records.
     esxi        Deploy N nested ESXi from the OVA; size CPU/mem + vSAN disks;
@@ -66,6 +66,10 @@ STAGE 2 — nested vSphere: ESXi + vCenter (VCSA) + Supervisor (vSphere Foundati
     cluster     Datacenter + cluster (DRS); add hosts; align the cluster image
                 to the seeded build; VDS + portgroups; vSAN (OSA) + HA; WCP
                 storage policy.
+    vsanhealth  Remediate 3 vSAN health findings universal on nested hardware
+                (HCL NVMe cert + Support Insight: silenced; Performance
+                Service: actually enabled) via RVC over SSH -- these block
+                Supervisor's Spherelet install otherwise. Idempotent.
     supervisor  Content library; enable Supervisor with the Foundation LB;
                 wait for RUNNING.
     labinfo     Write the access sheet (/etc/nested-lab/lab2-info.txt).
