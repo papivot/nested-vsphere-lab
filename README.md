@@ -15,17 +15,18 @@ Every stage shares the same input file, runner, logging, state/resume and rollba
   - at least **2 NICs** (one public/egress, one private trunk),
   - at least **100 GB** free disk (default; configurable via `jumpbox.min_disk_gb`),
   - running on vSphere with the private NIC's portgroup set to a **VLAN trunk (4095)** with **Promiscuous mode / Forged transmits / MAC changes = Accept** and jumbo MTU on the vSwitch.
-- Run **as root, on the jumpbox itself**. `bootstrap.sh` fetches the static `yq` and `govc` binaries and installs base utilities (`jq`, `openssl`, `curl`, `envsubst`) from the OS repos.
+- Run **as root, on the jumpbox itself**. `bootstrap.sh` fetches the static `yq` and `govc` binaries and installs base utilities (`jq`, `curl`, `openssl`, `ca-certificates`, `tar`, `gzip`, `sshpass`, `envsubst`) from the OS repos.
 
 **Additional requirements for Stage 2:**
 - An **underlying vSphere target** to host the nested VMs — a standalone ESXi host *or* an existing vCenter (`stage2.underlying.type`) — with enough CPU/RAM/disk for the nested cluster (3 nested ESXi + VCSA + Supervisor is resource-hungry) and a **VLAN-trunk portgroup** carrying the private fabric.
 - The **binaries staged under `artifacts.dir`**: the nested-ESXi OVA and the VCSA installer ISO (downloaded from Broadcom; filenames set in `stage2.esxi.ova` / `stage2.vcsa.iso`).
 - **≥ 3 nested ESXi** entries in `dns.records` (required for vSAN FTT=1).
+- **`sshpass`** (installed by `bootstrap.sh`) — the `vsanhealth` step drives the VCSA over SSH+RVC and hard-fails without it.
 
 ## Quick start
 
 ```bash
-sudo ./bootstrap.sh                              # installs yq + govc + base utilities (incl. envsubst)
+sudo ./bootstrap.sh                              # installs yq + govc + base utilities (incl. envsubst, sshpass)
 cp input.example.yaml input.yaml && $EDITOR input.yaml
 cp secrets.example.env secrets.env && chmod 600 secrets.env && $EDITOR secrets.env
 sudo ./run.sh --stage 1
@@ -43,7 +44,7 @@ All stages read one YAML file (`input.yaml`). Secrets are **not** in it — they
 - `CA_KEY_PASSPHRASE` — optional passphrase for the self-signed CA key.
 - `UNDERLYING_PASSWORD` — (Stage 2) root/SSO password for the underlying ESXi or vCenter target.
 - `ESXI_ROOT_PASSWORD` — (Stage 2) root password set on each nested ESXi.
-- `VCSA_SSO_PASSWORD` — (Stage 2) SSO administrator + appliance root password for the nested vCenter.
+- `VCSA_SSO_PASSWORD` — (Stage 2) SSO administrator + appliance **root** password for the nested vCenter. The `vcenter` step's `vcsa-deploy` templates set both from this one secret and enable SSH (`ssh_enable: true`), so it also doubles as the **SSH login password the `vsanhealth` step uses (via RVC) to reach the VCSA as root**.
 
 If a needed secret is blank, `run.sh` prompts for it (no echo).
 
@@ -158,10 +159,11 @@ Two layers: fast offline **unit tests** (run anywhere — no root, no Linux) and
 
 ```bash
 bats tests/bats/                 # everything below (install bats-core first)
-bats tests/bats/ipcalc.bats      # CIDR math (gateway, last /26, containment, reverse zones)
-bats tests/bats/step_*.bats      # one file per step: validates each step's rendered output
-bats tests/bats/structure.bats   # file presence + input.example.yaml validity (needs yq)
-bats tests/bats/syntax.bats      # bash -n on every script (+ shellcheck if installed)
+bats tests/bats/ipcalc.bats        # CIDR math (gateway, last /26, containment, reverse zones)
+bats tests/bats/lib_write_file.bats # write_file's FILE_CHANGED semantics + the `< <(render_fn)` idiom
+bats tests/bats/step_*.bats        # one file per step: validates each step's rendered output
+bats tests/bats/structure.bats     # file presence + input.example.yaml validity (needs yq)
+bats tests/bats/syntax.bats        # bash -n on every script (+ shellcheck if installed)
 ./run.sh --stage 1 --verify      # full live verification on a real jumpbox
 ```
 
