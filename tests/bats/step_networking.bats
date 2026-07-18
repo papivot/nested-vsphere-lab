@@ -46,6 +46,13 @@ setup() { load_libs; source_step 30-networking.sh; sample_model; }
   [[ "$output" == *"MTUBytes=9000"* ]]
 }
 
+@test "networkd: per-vlan .network carries the tagged iface addr + jumbo MTU" {
+  run _net_render_photon_network 1
+  [[ "$output" == *"Name=ens224.101"* ]]
+  [[ "$output" == *"MTUBytes=9000"* ]]
+  [[ "$output" == *"Address=192.168.101.1/24"* ]]
+}
+
 @test "registry secondary IP is added on its VLAN interface (all 3 renderers)" {
   V_EXTRA=(192.168.100.10 "" "")    # registry IP held on the native iface
   run _net_render_debian
@@ -53,6 +60,9 @@ setup() { load_libs; source_step 30-networking.sh; sample_model; }
   run _net_nmcli_addargs 0
   [[ "$output" == *"ipv4.addresses 192.168.100.1/24,192.168.100.10/24"* ]]
   run _net_render_photon_main
+  [[ "$output" == *"Address=192.168.100.10/24"* ]]
+  run _net_render_photon_network 0
+  [[ "$output" == *"Address=192.168.100.1/24"* ]]
   [[ "$output" == *"Address=192.168.100.10/24"* ]]
 }
 

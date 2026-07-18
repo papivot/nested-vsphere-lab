@@ -82,4 +82,20 @@ sample_model2() {
   export FLB_WORKLOAD_NW_STARTING_IP=192.168.101.100 FLB_WORKLOAD_IP_COUNT=50
   export FLB_VIP_STARTING_IP=192.168.103.10 FLB_VIP_IP_COUNT=100
   export K8S_SERVICE_SUBNET=10.96.0.0 K8S_SERVICE_SUBNET_COUNT=512
+  # nested ESXi inventory (array form; distinct from the single ESXI_HOST_*
+  # import-time vars above) + cluster/supervisor identifiers, for steps that
+  # render a full summary (e.g. 90-labinfo.sh) rather than a single JSON spec.
+  export VCSA_USER="administrator@${VCSA_SSO_DOMAIN}"
+  N_NESXI=3
+  NESXI_NAME=(esxi01 esxi02 esxi03)
+  NESXI_IP=(192.168.100.51 192.168.100.52 192.168.100.53)
+  NESXI_FQDN=(esxi01.env1.lab.test esxi02.env1.lab.test esxi03.env1.lab.test)
+  export CLUSTER_NAME=nested-cluster CLUSTER_DC=nested-dc VDS_NAME=nested-vds
+  export VSAN_DS=vsanDatastore VSAN_FTT=1
+  export S2_PROFILE=vds_foundation_lb
+  export SUPER_CP_SIZE=tiny
+  export SUPER_MGMT_NET=mgmt SUPER_MGMT_VLAN_ID=100 SUPER_MGMT_CIDR=192.168.100.0/24
+  export SUPER_WKLD_NET=workload0 SUPER_WKLD_VLAN_ID=101 SUPER_WKLD_CIDR=192.168.101.0/24
+  export STORAGE_POLICY=vsan-default CONTENT_LIB=vks-content-library
+  export REGISTRY_FQDN=registry.env1.lab.test
 }

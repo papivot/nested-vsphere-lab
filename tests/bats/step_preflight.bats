@@ -16,6 +16,12 @@ setup() { load_libs; source_step 00-preflight.sh; sample_model; }
   [[ "$output" == *"Duplicate VLAN IDs"* ]]
 }
 
+@test "overlapping/duplicate VLAN subnets detected" {
+  V_CIDR=(192.168.100.0/24 192.168.100.0/24 192.168.102.0/24)
+  run _pf_model_errors
+  [[ "$output" == *"Overlapping/duplicate VLAN subnets detected."* ]]
+}
+
 @test "native VLAN not defined detected" {
   NATIVE_VLAN=200
   run _pf_model_errors
