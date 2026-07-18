@@ -60,5 +60,9 @@ ROOT="${BATS_TEST_DIRNAME}/../.."
 
 @test "secrets example present, real secrets file is not committed" {
   [ -f "${ROOT}/secrets.example.env" ]
-  [ ! -f "${ROOT}/secrets.env" ]
+  # Check git-tracking status, not disk existence: a real deployment
+  # legitimately has a local (gitignored) secrets.env, which must never be
+  # tracked/committed -- but is fine, and expected, to exist on disk.
+  run git -C "${ROOT}" ls-files --error-unmatch secrets.env
+  [ "$status" -ne 0 ]
 }

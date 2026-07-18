@@ -29,7 +29,16 @@ teardown() { rm -rf "$TMP"; }
 
 @test "mode is applied" {
   write_file "$F" 0600 < <(printf 'x\n')
-  perm=$(stat -f '%Lp' "$F" 2>/dev/null || stat -c '%a' "$F")
+  # GNU stat's `-f` is a *valid* flag (filesystem-status mode, not file-mode),
+  # so trying `stat -f '%Lp'` first and falling back to `-c '%a'` on error
+  # does NOT reliably detect GNU vs BSD stat -- `-f` doesn't cleanly fail on
+  # GNU, it just returns something else. Detect the variant explicitly instead
+  # (`--version` is GNU-only; BSD/macOS stat errors out on it).
+  if stat --version >/dev/null 2>&1; then
+    perm=$(stat -c '%a' "$F")   # GNU coreutils (Linux)
+  else
+    perm=$(stat -f '%Lp' "$F")  # BSD (macOS)
+  fi
   [ "$perm" = "600" ]
 }
 
