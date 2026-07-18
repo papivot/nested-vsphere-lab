@@ -72,7 +72,17 @@ pkg_install() {
   [[ $# -gt 0 ]] || return 0
   case "$OS_FAMILY" in
     debian) DEBIAN_FRONTEND=noninteractive apt-get install -y "$@" ;;
-    redhat) dnf install -y "$@" 2>/dev/null || yum install -y "$@" ;;
+    redhat)
+      # Only fall back to yum if dnf itself is missing (older RHEL/CentOS 7),
+      # not on any dnf failure -- otherwise a real dnf error (bad repo, unmet
+      # dependency) gets hidden behind a confusing "yum: command not found" on
+      # modern RHEL-likes, where yum doesn't exist.
+      if command -v dnf >/dev/null 2>&1; then
+        dnf install -y "$@"
+      else
+        yum install -y "$@"
+      fi
+      ;;
     photon) tdnf install -y "$@" ;;
   esac
 }

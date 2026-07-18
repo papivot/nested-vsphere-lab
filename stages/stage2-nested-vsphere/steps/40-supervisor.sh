@@ -69,7 +69,9 @@ _url_ssl_thumbprint() {
   local url="$1" host port
   host=$(printf '%s' "$url" | sed -E 's#^[a-z]+://##; s#/.*$##; s#:[0-9]+$##')
   port=$(printf '%s' "$url" | sed -nE 's#^[a-z]+://[^/:]+:([0-9]+).*#\1#p'); port="${port:-443}"
-  echo | openssl s_client -connect "${host}:${port}" -servername "${host}" 2>/dev/null \
+  # timeout guards against an unreachable content_library_url host hanging
+  # the whole run on openssl's default (long) TCP-connect wait.
+  echo | timeout 15 openssl s_client -connect "${host}:${port}" -servername "${host}" 2>/dev/null \
     | openssl x509 -noout -fingerprint -sha1 2>/dev/null | sed 's/^.*=//'
 }
 
@@ -77,7 +79,13 @@ _url_ssl_thumbprint() {
 # Content library: SUBSCRIBED (TKr) when content_library_url is set, else LOCAL.
 # ---------------------------------------------------------------------------
 _create_content_library() {
-  local libs; libs=$(vc_api GET "${VCSA_IP}" "${_WCP_TOK}" "/api/content/library" 2>/dev/null || echo '[]')
+  # No 2>/dev/null here: vc_api dies with a specific "HTTP <code>: <body>"
+  # message on a real failure, and since this call isn't inside a pipeline,
+  # that die's `exit` terminates this assignment's subshell before the
+  # `|| echo '[]'` fallback ever runs -- discarding stderr would silently
+  # swallow the one message that explains why, leaving only run.sh's generic
+  # "command failed" from the ERR trap.
+  local libs; libs=$(vc_api GET "${VCSA_IP}" "${_WCP_TOK}" "/api/content/library" || echo '[]')
   local id name
   for id in $(printf '%s' "$libs" | jq -r '.[]' 2>/dev/null); do
     name=$(vc_api GET "${VCSA_IP}" "${_WCP_TOK}" "/api/content/library/${id}" 2>/dev/null \

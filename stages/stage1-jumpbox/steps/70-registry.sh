@@ -39,8 +39,10 @@ step_registry() {
   if [[ "$REGISTRY_AUTH" == "true" ]]; then
     require_secret REGISTRY_ADMIN_PASSWORD "registry admin password"
     mkdir -p "${REGISTRY_DATA}/auth"
+    # No 2>/dev/null: let docker's own error (pull failure, runtime error) show
+    # before the die message, instead of hiding the reason behind a generic one.
     docker run --rm --entrypoint htpasswd "$(_img httpd:2)" -Bbn admin "$REGISTRY_ADMIN_PASSWORD" \
-      > "${REGISTRY_DATA}/auth/htpasswd" 2>/dev/null || die "failed to generate htpasswd."
+      > "${REGISTRY_DATA}/auth/htpasswd" || die "failed to generate htpasswd."
     AUTH_ARGS=(
       -v "${REGISTRY_DATA}/auth:/auth:ro"
       -e REGISTRY_AUTH=htpasswd

@@ -225,7 +225,8 @@ vcsa_rvc() {
 
   command -v sshpass >/dev/null 2>&1 || die "sshpass not found. Run ./bootstrap.sh first."
 
-  sshpass -p "${VCSA_SSO_PASSWORD}" ssh -tt \
+  local raw esc_pw
+  raw=$(sshpass -p "${VCSA_SSO_PASSWORD}" ssh -tt \
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 \
     "root@${VCSA_IP}" <<RVCSCRIPT 2>&1
 shell.set --enabled true
@@ -234,6 +235,12 @@ chsh -s /bin/bash root
 rvc ${rvc_args}
 exit
 RVCSCRIPT
+)
+  # The forced pty (needed for the first-run appliancesh -> `shell` transition)
+  # echoes back everything sent to it, including the RVC connect string --
+  # which embeds VCSA_SSO_PASSWORD. Redact it before any caller logs $raw.
+  esc_pw=$(printf '%s' "${VCSA_SSO_PASSWORD}" | sed -e 's/[.[\*^$/]/\\&/g')
+  printf '%s' "$raw" | sed "s/${esc_pw}/[REDACTED]/g"
 }
 
 # ---------------------------------------------------------------------------

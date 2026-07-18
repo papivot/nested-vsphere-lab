@@ -283,8 +283,13 @@ _add_hosts_to_vds() {
       || warn "dvs.add for '${fqdn}' reported an error (may already be added)."
 
     log "Enabling vSAN + vMotion services on ${fqdn} vmk0 ..."
-    govc host.vnic.service -k -host "${fqdn}" -enable vsan    vmk0 2>/dev/null || true
-    govc host.vnic.service -k -host "${fqdn}" -enable vmotion vmk0 2>/dev/null || true
+    # Non-fatal (may already be enabled on a re-run) but no longer silent: a
+    # real failure here leaves vSAN/vMotion traffic untagged on vmk0, which
+    # otherwise only surfaces later as an obscure vSAN network health issue.
+    govc host.vnic.service -k -host "${fqdn}" -enable vsan    vmk0 2>/dev/null \
+      || warn "Could not confirm 'vsan' service enabled on ${fqdn} vmk0 (may already be enabled)."
+    govc host.vnic.service -k -host "${fqdn}" -enable vmotion vmk0 2>/dev/null \
+      || warn "Could not confirm 'vmotion' service enabled on ${fqdn} vmk0 (may already be enabled)."
 
     log "Setting NTP on ${fqdn} ..."
     govc host.esxcli -k -host "${fqdn}" system ntp set -e true -s "${NTP_SERVER}" 2>/dev/null || true

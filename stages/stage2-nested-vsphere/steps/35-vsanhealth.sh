@@ -71,6 +71,15 @@ step_vsanhealth() {
 _vsanhealth_all_clear() {
   local path="$1" summary
   summary=$(vcsa_rvc "vsan.health.health_summary ${path}")
+  # A genuine health_summary response always starts with this line. Anything
+  # else (SSH/RVC failure, bad password, sshpass missing, a network blip) has
+  # no "Warning" substring either -- without this guard that would be
+  # misread as "all clear", silently skipping remediation/verification
+  # entirely instead of surfacing the real failure.
+  if [[ "$summary" != *"Overall health findings"* ]]; then
+    warn "vsan.health.health_summary returned no recognizable health data (RVC/SSH failure?): ${summary}"
+    return 1
+  fi
   ! printf '%s\n' "$summary" \
     | grep -E 'NVMe device is VMware certified|Performance service status' \
     | grep -q 'Warning'

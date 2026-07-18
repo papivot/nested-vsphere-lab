@@ -5,7 +5,8 @@ rollback_networking() {
   case "$OS_FAMILY" in
     debian)
       rm -f /etc/netplan/99-nested-lab.yaml
-      netplan apply || true
+      netplan apply \
+        || warn "netplan apply failed after removing the VLAN config; interfaces may be stale until the next apply/reboot."
       ;;
     redhat)
       for ((i=0; i<N_VLANS; i++)); do
@@ -15,7 +16,8 @@ rollback_networking() {
     photon)
       rm -f "/etc/systemd/network/10-nested-${PRIVATE_NIC}.network"
       rm -f /etc/systemd/network/20-nested-*.netdev /etc/systemd/network/21-nested-*.network
-      svc_restart systemd-networkd || true
+      svc_restart systemd-networkd \
+        || warn "Could not restart systemd-networkd after removing the VLAN config; interfaces may be stale until it restarts."
       ;;
   esac
   ok "Removed nested VLAN interface config."
